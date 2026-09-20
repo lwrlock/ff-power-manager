@@ -1,0 +1,9 @@
+# AC adapter changes only trigger a short oneshot. No background polling.
+SUBSYSTEM=="power_supply", ENV{POWER_SUPPLY_TYPE}=="Mains", ACTION=="change", TAG+="systemd", ENV{SYSTEMD_WANTS}+="ff-power-apply.service"
+# Lenovo fallback used by 83JK firmware (ACAD).
+SUBSYSTEM=="power_supply", KERNEL=="ACAD", ACTION=="change", TAG+="systemd", ENV{SYSTEMD_WANTS}+="ff-power-apply.service"
+
+# Prevent I2C touchpad and DesignWare controller runtime autosuspend lag
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x0c8000", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="i2c", KERNEL=="i2c-SYNA*", ATTR{power/control}="on"
+

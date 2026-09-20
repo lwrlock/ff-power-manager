@@ -1,0 +1,14 @@
+[Unit]
+Description=FF Power Manager - GNOME OLED presence controller
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/usr/local/lib/ff-power-manager
+ExecStart=/usr/bin/python3 -m fpm.presence
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.ff.PowerManager</id>
+  <name>FF Power Manager</name>
+  <summary>Event-driven laptop power and Lenovo ToF presence manager</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>GNOME/Fedora power-profile helper for Lenovo IdeaPad Pro 5 14IAH10 with optional Intel ISH / ST VL53L1 HOD presence-controlled OLED blanking.</p>
+  </description>
+  <launchable type="desktop-id">com.ff.PowerManager.desktop</launchable>
+  <provides><binary>ff-power-manager</binary></provides>
+</component>

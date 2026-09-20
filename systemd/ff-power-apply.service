@@ -1,0 +1,12 @@
+[Unit]
+Description=FF Power Manager - apply AC/battery policy
+After=power-profiles-daemon.service NetworkManager.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/usr/local/lib/ff-power-manager
+ExecStart=/usr/bin/python3 -m fpm.power_apply
+Nice=10
+
+[Install]
+WantedBy=graphical.target

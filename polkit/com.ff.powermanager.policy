@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+
+<policyconfig>
+  <vendor>FF Power Manager</vendor>
+  <vendor_url>https://github.com/lwrlock/ff-power-manager</vendor_url>
+
+  <action id="com.ff.powermanager.save-and-apply">
+    <description>Save and apply FF Power Manager configuration</description>
+    <message>FF Power Manager ayarlarını kaydetmek ve uygulamak için yetkilendirme gerekiyor.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/ff-power-manager/ff-power-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

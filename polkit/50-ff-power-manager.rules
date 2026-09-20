@@ -1,0 +1,6 @@
+polkit.addRule(function(action, subject) {
+    if (action.id == "com.ff.powermanager.save-and-apply" &&
+        (subject.isInGroup("wheel") || subject.local)) {
+        return polkit.Result.YES;
+    }
+});
