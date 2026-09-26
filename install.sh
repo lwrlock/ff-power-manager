@@ -104,7 +104,9 @@ sudo install -m644 systemd/ff-presence-sensor.service /etc/systemd/system/
 sudo install -m644 systemd/ff-presence-session.service /usr/local/lib/systemd/user/
 sudo install -m644 udev/90-ff-power-manager.rules /etc/udev/rules.d/
 sudo install -m644 applications/com.ff.PowerManager.desktop /usr/local/share/applications/
+sudo install -m644 applications/com.ff.PowerManager.TUI.desktop /usr/local/share/applications/
 sudo install -m644 applications/com.ff.PowerManager.metainfo.xml /usr/local/share/metainfo/
+sudo update-desktop-database /usr/local/share/applications/ 2>/dev/null || true
 
 step '8/10' 'Kendi Kendini Sınama (Test Suite)'
 ./test_native

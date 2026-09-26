@@ -22,6 +22,7 @@ sudo rm -f \
   /usr/local/bin/ff-presence-sensor \
   /usr/local/sbin/fpmctl \
   /usr/local/share/applications/com.ff.PowerManager.desktop \
+  /usr/local/share/applications/com.ff.PowerManager.TUI.desktop \
   /usr/local/share/metainfo/com.ff.PowerManager.metainfo.xml
 
 sudo rm -rf \

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=FF Power Manager (Terminal Dashboard)
+Name[tr]=FF Power Manager (Terminal Paneli)
+Comment=Interactive btop-style power and ToF presence dashboard
+Comment[tr]=btop tarzı dinamik güç ve ToF varlık paneli
+Exec=/usr/local/bin/ff-tui
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=System;Monitor;Settings;
+Keywords=power;battery;tof;presence;oled;tuning;dashboard;btop;
