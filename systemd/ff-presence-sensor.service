@@ -1,13 +1,12 @@
 [Unit]
-Description=FF Power Manager - Lenovo ToF human-presence sensor
+Description=FF Power Manager - Lenovo ToF human-presence sensor (Native Engine)
 After=systemd-udev-settle.service
 
 [Service]
 Type=simple
-Environment=PYTHONPATH=/usr/local/lib/ff-power-manager
-ExecStart=/usr/bin/python3 -m fpm.sensor
-ExecStopPost=-/usr/bin/env PYTHONPATH=/usr/local/lib/ff-power-manager /usr/bin/python3 -m fpm.sensor --disable
-Restart=on-failure
+ExecStart=/usr/local/bin/ff-presence-sensor
+ExecStopPost=-/usr/local/bin/ff-presence-sensor --disable
+Restart=always
 RestartSec=2
 Nice=10
 

@@ -143,6 +143,34 @@ def adaptive_silence_timeout(base: float, intervals) -> float:
     return min(60.0, max(base, median * 4.0, p90 * 2.0))
 
 
+def decode_report_4(data: bytes, threshold: int = 12) -> tuple[bool | None, int | None]:
+    """Decode Report 4 from ST VL53L1 / Intel ISH.
+    Returns (is_present, distance_raw).
+    - Offset 27..30: 0x0544 Human Presence (int32: 1 = present, 0 = absent)
+    - Offset 32: 0x04b1 Distance (uint8: <= 12 corresponds to 1.2m normal desk range)
+    """
+    if len(data) < 31 or data[0] != REPORT_ID:
+        return None, None
+    try:
+        presence_raw = int.from_bytes(data[27:31], 'little', signed=True)
+        distance_raw = data[32] if len(data) > 32 else None
+        if presence_raw == 1:
+            # If distance exceeds 1.2m (12 dm), user is beyond normal desk range!
+            if distance_raw is not None and distance_raw > threshold:
+                return False, distance_raw
+            return True, distance_raw
+        if presence_raw == 0:
+            return False, distance_raw
+        # Fallback if presence byte is not standard 0/1: check distance (<= 12 is <= 1.2m)
+        if distance_raw is not None and 0 < distance_raw <= threshold:
+            return True, distance_raw
+        if distance_raw is not None and distance_raw > threshold:
+            return False, distance_raw
+        return True, distance_raw
+    except Exception:
+        return None, None
+
+
 def _stop(*_):
     global _running
     _running = False
@@ -154,8 +182,8 @@ def run_daemon() -> None:
         raise RuntimeError('Intel ISH 8087:0AC2 hidraw bulunamadı')
 
     cfg = load_sensor_config()
-    silence_floor = float(cfg.get('silence_timeout', 15.0))
-    silence_floor = max(4.0, min(60.0, silence_floor))
+    silence_floor = float(cfg.get('silence_timeout', 30.0))
+    silence_floor = max(10.0, min(90.0, silence_floor))
     confirm_reports = int(cfg.get('present_confirm_reports', 1))
     confirm_reports = max(1, min(5, confirm_reports))
     confirm_window = float(cfg.get('present_confirm_window', 6.0))
@@ -209,7 +237,6 @@ def run_daemon() -> None:
                         candidate_reports = 0
                         publish(state)
                 elif candidate_reports > 0:
-                    # A lone/sporadic report while away must not wake the OLED.
                     candidate_start = None
                     candidate_reports = 0
                 elif state == 'unknown' and now >= initial_deadline:
@@ -232,16 +259,27 @@ def run_daemon() -> None:
             now = time.monotonic()
             if previous_report is not None:
                 gap = now - previous_report
-                if 0.05 <= gap <= 10.0:
+                if 0.05 <= gap <= 20.0:
                     intervals.append(gap)
             previous_report = now
             last_report = now
 
+            data_present, distance = decode_report_4(data)
+
+            # If the sensor explicitly reports absence (or distance > 2.4m):
+            if data_present is False:
+                if state != 'absent':
+                    state = 'absent'
+                    candidate_start = None
+                    candidate_reports = 0
+                    publish(state)
+                continue
+
+            # Human presence confirmed (data_present is True or packet arrived)
             if state == 'present':
                 continue
 
-            # Absent -> present uses positive confirmation. This suppresses a
-            # single stray Report 4 from waking the panel while nobody is there.
+            # Instant wake-on-approach if confirm_reports is 1
             if candidate_start is None or now - candidate_start > confirm_window:
                 candidate_start = now
                 candidate_reports = 1

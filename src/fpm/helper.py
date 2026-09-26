@@ -21,10 +21,44 @@ from .power_apply import apply_current
 SYSTEM_SENSOR_UNIT = "ff-presence-sensor.service"
 
 
-def cmd_apply() -> int:
-    applied = apply_current()
-    sys.stdout.write(f"Applied profile: {applied}\n")
-    return 0
+def cmd_apply(mode: str | None = None) -> int:
+    if mode in ('battery', 'ac'):
+        from .core import apply, load_config
+        apply(mode, load_config())
+        sys.stdout.write(f"Applied profile: {mode}\n")
+        return 0
+    elif mode in ('power_saver', 'max_battery', 'maximum_battery'):
+        from .core import apply, load_config, PRESETS
+        cfg = load_config()
+        cfg['battery'].update(PRESETS['battery']['maximum_battery'])
+        apply('battery', cfg)
+        sys.stdout.write("Applied profile: max_battery\n")
+        return 0
+    elif mode in ('performance', 'extreme_performance'):
+        from .core import apply, load_config, PRESETS
+        cfg = load_config()
+        cfg['ac'].update(PRESETS['ac']['extreme_performance'])
+        apply('ac', cfg)
+        sys.stdout.write("Applied profile: extreme_performance\n")
+        return 0
+    elif mode in ('cool_quiet',):
+        from .core import apply, load_config, PRESETS
+        cfg = load_config()
+        cfg['ac'].update(PRESETS['ac']['cool_quiet'])
+        apply('ac', cfg)
+        sys.stdout.write("Applied profile: cool_quiet\n")
+        return 0
+    elif mode in ('responsive', 'responsive_battery'):
+        from .core import apply, load_config, PRESETS
+        cfg = load_config()
+        cfg['battery'].update(PRESETS['battery']['responsive_battery'])
+        apply('battery', cfg)
+        sys.stdout.write("Applied profile: responsive_battery\n")
+        return 0
+    else:
+        applied = apply_current()
+        sys.stdout.write(f"Applied profile: {applied}\n")
+        return 0
 
 
 def cmd_save_config(data_str: str | None = None) -> int:
@@ -96,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
 
     action = args[0]
     if action == "apply":
-        return cmd_apply()
+        target = args[1] if len(args) > 1 else None
+        return cmd_apply(target)
     elif action == "save-config":
         data_arg = args[1] if len(args) > 1 else None
         return cmd_save_config(data_arg)
@@ -109,6 +144,18 @@ def main(argv: list[str] | None = None) -> int:
     elif action == "sensor-service":
         subaction = args[1] if len(args) > 1 else "restart"
         return cmd_sensor_service(subaction)
+    elif action == "set-turbo":
+        from .core import set_turbo
+        val = args[1].lower() in ('1', 'on', 'true', 'enable', 'enabled') if len(args) > 1 else True
+        set_turbo(val)
+        sys.stdout.write(f"Turbo set: {val}\n")
+        return 0
+    elif action == "set-epp":
+        from .core import set_epp
+        val = args[1] if len(args) > 1 else 'balance_power'
+        set_epp(val)
+        sys.stdout.write(f"EPP set: {val}\n")
+        return 0
     else:
         sys.stderr.write(f"Unknown action: {action}\n")
         return 2

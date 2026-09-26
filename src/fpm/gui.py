@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
+from copy import deepcopy
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -248,10 +250,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         timing = Adw.PreferencesGroup(title='Sensör Hassasiyet ve Zamanlama')
         page.add(timing)
-        self.silence_spin = Gtk.SpinButton.new_with_range(4.0, 60.0, 1.0)
+        self.silence_spin = Gtk.SpinButton.new_with_range(10.0, 90.0, 5.0)
         self.silence_spin.set_digits(1)
-        self.silence_spin.set_value(float(self.scfg.get('silence_timeout', 15.0)))
-        row = self._action_row('Sensör Sessizlik Eşiği (sn)', 'Bu süre boyunca yeni hareket algılanmazsa uzaklaşma kontrolü başlar.')
+        self.silence_spin.set_value(float(self.scfg.get('silence_timeout', 30.0)))
+        row = self._action_row('Sensör Yokluk Eşiği (sn)', 'Sensörden bu süre boyunca varlık sinyali gelmezse kullanıcı uzakta kabul edilir (Windows Vantage standardı: 30 sn).')
         row.add_suffix(self.silence_spin)
         timing.add(row)
 
@@ -279,7 +281,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.presence_switches = {}
         for key, title, subtitle in [
             ('screen_off_on_away', 'Uzaklaşınca OLED Paneli Karart', 'Sistemi askıya (suspend) almaz; arka plan görevleri kesilmez.'),
-            ('wake_on_approach', 'Yaklaşınca Ekranı Aç', 'Kullanıcı masaya döndüğünde ekranı aydınlatır.'),
+            ('wake_on_approach', 'Yaklaşınca Ekranı Aç', 'Kullanıcı masaya döndüğünde ekranı anında aydınlatır (2.4m ToF menzili).'),
             ('wake_only_if_fpm_off', 'Yalnız FPM Kapattıysa Aç', 'Kullanıcı ekranı elle kapattıysa ToF sensörü uyandırmaz.'),
             ('lock_on_away', 'Uzaklaşınca Oturumu Kilitle', 'İsteğe bağlı masaüstü güvenliği.'),
         ]:
@@ -338,6 +340,14 @@ class MainWindow(Adw.ApplicationWindow):
 
     def refresh_status(self) -> None:
         s = status_snapshot()
+        presence_map = {
+            'present': 'Kullanıcı Masada (Algılandı)',
+            'absent': 'Kullanıcı Uzakta (Beklemede)',
+            'disabled': 'Devre Dışı',
+            'unknown': 'Algılanıyor...',
+            'error': 'Sensör Hatası',
+        }
+        raw_pres = s.get('presence_state') or 'disabled'
         values = {
             'mode': 'Batarya' if s['mode'] == 'battery' else 'Adaptör',
             'watts': '—' if s['watts'] is None else f"{s['watts']:.2f} W",
@@ -347,7 +357,7 @@ class MainWindow(Adw.ApplicationWindow):
             'epp': s['epp'] or '—',
             'turbo': 'Açık' if s['turbo'] else ('Kapalı' if s['turbo'] is not None else '—'),
             'wifi_power_save': s['wifi_power_save'] or '—',
-            'presence_state': s['presence_state'] or 'disabled',
+            'presence_state': presence_map.get(raw_pres, raw_pres),
         }
         for key, value in values.items():
             if hasattr(self, 'rows') and key in self.rows:
@@ -378,7 +388,16 @@ class MainWindow(Adw.ApplicationWindow):
                     row.set_selected(row._values.index(v))
             elif isinstance(row, Adw.SwitchRow):
                 row.set_active(bool(v))
-        self.toast(f'{mode.capitalize()} için “{name}” profili yüklendi. Kaydetmeyi unutmayın.')
+        preset_tr = {
+            'recommended': 'Önerilen',
+            'maximum_battery': 'Maksimum Pil',
+            'responsive': 'Daha Tepkisel',
+            'performance': 'Performans',
+            'cool_quiet': 'Serin / Sessiz',
+        }
+        mode_label = 'Batarya' if mode == 'battery' else 'Adaptör'
+        preset_label = preset_tr.get(name, name)
+        self.toast(f'{mode_label} için “{preset_label}” profili seçildi. Kaydetmeyi unutmayın.')
 
     def _save_mode(self, _btn, mode: str) -> None:
         ctrls = self.mode_controls.get(mode, {})

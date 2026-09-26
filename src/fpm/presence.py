@@ -57,6 +57,19 @@ class PresenceController:
         self.dir_file = Gio.File.new_for_path(str(RUN_DIR))
         self.monitor = self.dir_file.monitor_directory(Gio.FileMonitorFlags.NONE, None)
         self.monitor.connect('changed', self._fs_changed)
+        try:
+            self.sys_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self.sys_bus.signal_subscribe(
+                'org.freedesktop.UPower',
+                'org.freedesktop.DBus.Properties',
+                'PropertiesChanged',
+                '/org/freedesktop/UPower',
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._upower_changed,
+            )
+        except Exception:
+            self.sys_bus = None
         self._read_state()
         self._read_power_mode_once()
 
@@ -114,14 +127,19 @@ class PresenceController:
                 None, None, Gio.DBusCallFlags.NONE, 2000, None
             )
             serial, monitors, logical_monitors, _ = res.unpack()
-            if not logical_monitors:
+            if not logical_monitors or not monitors:
                 return
-            lm = logical_monitors[0]
-            x, y, scale, transform, primary, mons, _ = lm
-            current_mode = mons[0][1]
+
+            current_mode = None
+            for m in monitors[0][1]:
+                if m[6].get('is-current'):
+                    current_mode = m[0]
+                    break
             if current_mode == target_mode:
                 return
 
+            lm = logical_monitors[0]
+            x, y, scale, transform, primary, mons, _ = lm
             mon_assignment = [(mons[0][0], target_mode, {})]
             new_lm = [(int(x), int(y), float(scale), int(transform), bool(primary), mon_assignment)]
 
@@ -142,6 +160,20 @@ class PresenceController:
                 (RUN_DIR / 'refresh.rate').write_text(target_mode)
             except Exception:
                 pass
+        except Exception:
+            pass
+
+    def _upower_changed(self, _bus, _sender, _path, _iface, _signal, params) -> None:
+        try:
+            iface_name, changed_props, _invalidated = params.unpack()
+            if 'OnBattery' in changed_props:
+                on_bat = bool(changed_props['OnBattery'])
+                mode = 'battery' if on_bat else 'ac'
+                try:
+                    (RUN_DIR / 'power.mode').write_text(mode)
+                except Exception:
+                    pass
+                self._update_refresh_rate(mode)
         except Exception:
             pass
 

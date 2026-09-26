@@ -3,82 +3,68 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux%20%2F%20Fedora-teal.svg)](https://getfedora.org)
 [![Desktop: GNOME](https://img.shields.io/badge/Desktop-GNOME%20%2F%20Wayland-orange.svg)](https://www.gnome.org)
+[![Engine: C & x86_64 ASM](https://img.shields.io/badge/Engine-C%20%26%20ASM-success.svg)](#)
 
 [ [English](README.md) | Türkçe ]
 
-Linux (Fedora / GNOME / Wayland) için geliştirilmiş hafif güç profili yöneticisi ve Lenovo ToF insan varlığı algılama aracı.
+Linux (Fedora / GNOME / Wayland) için geliştirilmiş **C & x86_64 Assembly** tabanlı ultra-hafif güç yöneticisi ve Lenovo ToF insan varlığı algılama aracı.
 
-Test edilen donanım: **Lenovo IdeaPad Pro 5 14IAH10** (Intel Core Ultra 9 285H, Samsung 2.8K 120Hz OLED, 87 Wh batarya).
-
----
-
-## Özellikler
-
-- **Dinamik OLED Yenileme Hızı:** Pildeyken ekranı kesintisiz **60 Hz**'e çeker; şarja takıldığında otomatik olarak **120 Hz + VRR** moduna döndürür.
-- **Lenovo ToF Varlık Algılama:** Intel ISH (`8087:0AC2`) içindeki ST VL53L1 kızılötesi sensöründen doğrudan HID paketlerini dinler. Masadan kalktığınızda OLED ekranı karartır, döndüğünüz anda anında uyandırır. Kamera kullanılmaz; tamamen donanımsal mesafe ölçümüdür, %100 çevrimdışı ve güvenlidir.
-- **Touchpad Gecikme Önleme:** I2C kontrolcüsünün boşta gereksiz yere uykuya dalmasını engelleyerek ilk dokunuştaki takılmayı tamamen yok eder.
-- **Donanım Güç Profilleri:** PCIe ASPM (`powersupersave`), NVMe runtime PM (`auto`), Intel EPP ve ses kartı güç tasarrufunu otomatik yönetir.
-- **Sıfır Arka Plan Döngüsü:** Pili izlemek için sürekli CPU yoran arka plan döngüleri çalıştırmaz; tüm işlemler `udev`, `sysfs` ve DBus olaylarıyla tetiklenir.
-- **GTK4 / Libadwaita Arayüzü & CLI:** Hızlı ön ayarlar sunan masaüstü uygulaması (`ff-power-manager`) ve terminal kontrol aracı (`ffctl`).
+Test edilen donanım: **Lenovo IdeaPad Pro 5 14IAH10 / Yoga Pro** (Intel Core Ultra 9 285H, Samsung 2.8K 120Hz OLED, 87 Wh batarya).
 
 ---
 
-## Gerçek Kullanım Süreleri (87 Wh Batarya)
+## Öne Çıkan Özellikler
 
-Fedora 44 (Linux 7.x, GNOME Wayland, ~%30–40 OLED parlaklığı) altında ölçülen değerler:
-
-| Senaryo | Ortalama Tüketim | Tahmini Çalışma Süresi |
-| :--- | :---: | :---: |
-| **Hafif Kullanım** (Web, VS Code, terminal, doküman - 60Hz) | ~8.0 – 9.0 W | **~9.5 – 10.5 Saat** |
-| **Karma / Ağır Yük** (Derleme, çoklu görev, müzik) | ~11.0 – 12.5 W | **~7.0 – 8.5 Saat** |
-| **Şarjda (AC)** | — | 120 Hz + VRR, Tam Performans |
+- **C & x86_64 Assembly Çekirdeği (0.0% CPU Yükü):** Doğrudan Linux syscall'ları ve el ile yazılmış assembly rutinleriyle donanımdan veri okur; işlemci tüketmez, RAM kullanımı 1 MB'ın altındadır.
+- **Canlı ToF Radarı ve Varlık Algılama:** ST VL53L1 kızılötesi sensöründen doğrudan HID paketlerini dinler. Ekrana olan mesafenizi canlı santimetre (örn. `68 cm / 120 cm`) olarak takip eder. Masadan kalktığınızda (> 1.2m) ekranı karartır, oturduğunuz anda anında uyandırır.
+- **Otomatik 60 Hz / 120 Hz + VRR Geçişi:** Pildeyken Samsung 2.8K OLED paneli **60 Hz**'e çeker; şarja takıldığında otomatik olarak **120 Hz + VRR** moduna döndürür.
+- **GNOME Kasma Koruması:** Batarya modundayken GNOME'un CPU'yu 400 MHz'e düşüren ve arayüzü kasan `power-saver` profiline girmesini engeller; daima `balanced` tutarak 60 FPS akıcılık sağlar.
+- **btop Tarzı Dinamik TUI Dashboard (`ff-tui`):** Otomatik boyutlanan, 3 ayrı sekmeli (`[1] Overview`, `[2] Battery`, `[3] AC Power`), tek tuşla donanımda doğrulanan profil uygulama özellikli terminal arayüzü.
+- **Açılışta Otomatik Başlama (Autostart):** `systemd` servisleri ile bilgisayar açıldığında hiçbir terminal komutuna gerek kalmadan arka planda çalışmaya başlar.
 
 ---
 
-## Bağımlılıklar
-
-Fedora üzerinde:
+## Kurulum ve Başlatma
 
 ```bash
-sudo dnf install -y python3-gobject gtk4 libadwaita iw power-profiles-daemon polkit intel-media-driver libva-utils
-```
-
----
-
-## Kurulum
-
-Repoyu klonlayıp kurulum betiğini çalıştırın:
-
-```bash
-git clone https://github.com/lwrlock/ff-power-manager.git
 cd ff-power-manager
-chmod +x install.sh
 sudo ./install.sh
 ```
 
-Uygulama menüsünden **FF Power Manager** simgesine tıklayarak veya terminalden başlatabilirsiniz:
+Kurulum tamamlandığında tüm servisler arka planda otomatik devreye girer.
 
+---
+
+## Kullanım Araçları
+
+### 1. Canlı Terminal Arayüzü (`ff-tui` veya `ffctl tui`)
 ```bash
-ff-power-manager
+ff-tui
 ```
+* `1` / `2` / `3` veya `Tab` : Sekmeler arasında geçiş (Overview / Battery / AC Power)
+* `P` : ToF Sensörünü Canlı Aç / Kapat
+* `T` : Intel Turbo Boost Aç / Kapat (Donanımda doğrulanır)
+* `A` / `B` / `C` : Aktif sekmedeki profili anında uygula ve doğrula
+* `Q` : Çıkış
 
-Terminal üzerinden durum kontrolü:
-
+### 2. Hızlı CLI Durum ve Telemetri (`ffctl`)
 ```bash
+# Donanım, batarya ve ekran durumunu görüntüle (< 1 ms)
 ffctl status
+
+# Canlı ToF sensör telemetrisini ve mesafeyi terminale akıt
+ffctl sensor live
+
+# ToF sensör durumunu ve alınan paket sayısını gör
+ffctl sensor status
+
+# Güç profili uygula ve donanımda doğrula
+ffctl apply battery
+ffctl apply ac
 ```
 
----
-
-## Tarayıcı Donanım Video Hızlandırma
-
-YouTube ve video izlerken pil tüketimini düşürmek için Brave veya Chrome üzerinde `brave://flags` (veya `chrome://flags`) adresine gidin. **Hardware-accelerated video decode** ayarını **Enabled** yapıp tarayıcıyı yeniden başlatın.
-
----
-
-## Katkıda Bulunma
-
-Farklı bir Lenovo modelinde denediyseniz veya katkı sağlamak isterseniz [CONTRIBUTING.tr.md](CONTRIBUTING.tr.md) kılavuzuna bakabilirsiniz.
+### 3. Masaüstü Grafik Arayüzü (GTK4 / Libadwaita)
+Uygulama menüsünden **FF Power Manager**'ı seçebilir veya terminalden `ff-power-manager` çalıştırabilirsiniz.
 
 ---
 

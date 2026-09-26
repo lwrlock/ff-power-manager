@@ -13,3 +13,9 @@ venv/
 *.log
 .vscode/
 .idea/
+ff-presence-sensor
+ffctl
+ff-tui
+test_native
+*.o
+.pytest_cache/

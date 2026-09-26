@@ -63,5 +63,37 @@ class ConfigTests(unittest.TestCase):
             self.assertIn('save-and-apply', args)
 
 
+    def test_decode_report_4(self):
+        # Empty or short packet returns None
+        self.assertEqual(sensor.decode_report_4(b''), (None, None))
+        
+        # Valid packet with Report ID 4, presence = 1, distance = 8 (0.8m <= 1.2m)
+        buf_present = bytearray(35)
+        buf_present[0] = 4
+        buf_present[27:31] = (1).to_bytes(4, 'little', signed=True)
+        buf_present[32] = 8 # 0.8m
+        is_pres, dist = sensor.decode_report_4(bytes(buf_present))
+        self.assertTrue(is_pres)
+        self.assertEqual(dist, 8)
+
+        # Presence flag 1, but user stepped away to 16 (1.6m > 1.2m) -> Absent!
+        buf_far = bytearray(35)
+        buf_far[0] = 4
+        buf_far[27:31] = (1).to_bytes(4, 'little', signed=True)
+        buf_far[32] = 16 # 1.6m
+        is_pres, dist = sensor.decode_report_4(bytes(buf_far))
+        self.assertFalse(is_pres)
+        self.assertEqual(dist, 16)
+
+        # Valid packet with Report ID 4 and presence = 0
+        buf_absent = bytearray(35)
+        buf_absent[0] = 4
+        buf_absent[27:31] = (0).to_bytes(4, 'little', signed=True)
+        buf_absent[32] = 10
+        is_pres, dist = sensor.decode_report_4(bytes(buf_absent))
+        self.assertFalse(is_pres)
+        self.assertEqual(dist, 10)
+
+
 if __name__ == '__main__':
     unittest.main()

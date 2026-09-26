@@ -2,16 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PRESENCE_WAS_ENABLED=0
-if systemctl --user is-enabled --quiet ff-presence-session.service 2>/dev/null && \
-   systemctl is-enabled --quiet ff-presence-sensor.service 2>/dev/null; then
-  PRESENCE_WAS_ENABLED=1
-fi
-
 step() { printf '\n[%s] %s\n' "$1" "$2"; }
 
-step '1/10' 'Bağımlılıklar'
-sudo dnf install -y python3-gobject gtk4 libadwaita iw power-profiles-daemon polkit intel-media-driver libva-utils
+step '1/10' 'Bağımlılıklar (C/ASM derleyicileri ve sistem araçları)'
+sudo dnf install -y gcc make python3-gobject gtk4 libadwaita iw power-profiles-daemon polkit intel-media-driver libva-utils
 
 step '2/10' 'Eski sürümleri temizleme'
 ./scripts/cleanup-legacy.sh --apply
@@ -27,25 +21,25 @@ sudo install -d -m755 \
 # /etc/ff-power-manager dizinini root:wheel 2775 yaparak wheel grubundaki kullanıcılara güvenli erişim sağla
 sudo install -d -m2775 -g wheel /etc/ff-power-manager
 
-step '4/10' 'Program ve Yardımcı Dosyaları'
+step '4/10' 'C & x86_64 Assembly Motorunu Derleme ve Kurma'
+make build
+
+# Native yüksek performanslı ikililer
+sudo install -m755 ff-presence-sensor /usr/local/bin/ff-presence-sensor
+sudo install -m755 ffctl /usr/local/bin/ffctl
+sudo install -m755 ff-tui /usr/local/bin/ff-tui
+sudo ln -sf /usr/local/bin/ffctl /usr/local/sbin/fpmctl
+
+# Python kütüphaneleri ve yardımcı betikler
 sudo install -m644 src/fpm/*.py /usr/local/lib/ff-power-manager/fpm/
 
-# Privileged helper
+# Privileged helper (Polkit entegrasyonu için)
 cat <<'SH' | sudo tee /usr/local/lib/ff-power-manager/ff-power-helper >/dev/null
 #!/bin/sh
 export PYTHONPATH=/usr/local/lib/ff-power-manager
 exec /usr/bin/python3 -m fpm.helper "$@"
 SH
 sudo chmod 755 /usr/local/lib/ff-power-manager/ff-power-helper
-
-# CLI aracı (ffctl ve geriye uyumlu fpmctl)
-cat <<'SH' | sudo tee /usr/local/bin/ffctl >/dev/null
-#!/bin/sh
-export PYTHONPATH=/usr/local/lib/ff-power-manager
-exec /usr/bin/python3 -m fpm.cli "$@"
-SH
-sudo chmod 755 /usr/local/bin/ffctl
-sudo ln -sf /usr/local/bin/ffctl /usr/local/sbin/fpmctl
 
 # GUI başlatıcı (ff-power-manager)
 cat <<'SH' | sudo tee /usr/local/bin/ff-power-manager >/dev/null
@@ -90,9 +84,17 @@ if [[ ! -f /etc/ff-power-manager/config.json ]]; then
 }
 JSON
 fi
-if [[ ! -f /etc/ff-power-manager/sensor.json ]]; then
-  echo '{"silence_timeout":4.0,"present_confirm_reports":2,"present_confirm_window":3.0}' | sudo tee /etc/ff-power-manager/sensor.json >/dev/null
-fi
+
+# Sensör eşiklerini 1.2m normal masa mesafesi ve 30s sessizlik süresi olarak garantiye al
+cat <<'JSON' | sudo tee /etc/ff-power-manager/sensor.json >/dev/null
+{
+  "silence_timeout": 30.0,
+  "present_confirm_reports": 1,
+  "present_confirm_window": 6.0,
+  "distance_threshold": 12
+}
+JSON
+
 sudo chown -R root:wheel /etc/ff-power-manager
 sudo chmod 664 /etc/ff-power-manager/*.json 2>/dev/null || true
 
@@ -104,17 +106,21 @@ sudo install -m644 udev/90-ff-power-manager.rules /etc/udev/rules.d/
 sudo install -m644 applications/com.ff.PowerManager.desktop /usr/local/share/applications/
 sudo install -m644 applications/com.ff.PowerManager.metainfo.xml /usr/local/share/metainfo/
 
-step '8/10' 'Kendi Kendini Sınama (Self-test)'
+step '8/10' 'Kendi Kendini Sınama (Test Suite)'
+./test_native
 PYTHONPATH=src python3 -m py_compile src/fpm/*.py
-sudo env PYTHONPATH=/usr/local/lib/ff-power-manager /usr/bin/python3 -m fpm.cli status >/dev/null
-echo 'Python ve modül kontrolü: Başarılı'
+echo 'C & x86_64 Assembly ve Python kontrolleri: Başarılı'
 
-step '9/10' 'Servisleri Yükleme ve Güç Profilini Uygulama'
+step '9/10' 'Servisleri Yükleme ve Başlatma (Autostart on Boot)'
 sudo systemctl daemon-reload
 sudo udevadm control --reload-rules
-sudo systemctl enable ff-power-apply.service >/dev/null
+sudo udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
+
+# Boot sırasında otomatik başlayacak servisler
+sudo systemctl enable --now ff-power-apply.service >/dev/null
 sudo systemctl enable --now ff-presence-sensor.service >/dev/null
 
+# Kullanıcı oturumu açıldığında otomatik başlayacak servis
 if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
   USER_UID="$(id -u "$SUDO_USER")"
   sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user daemon-reload 2>/dev/null || true
@@ -123,10 +129,18 @@ else
   systemctl --user daemon-reload 2>/dev/null || true
   systemctl --user enable --now ff-presence-session.service 2>/dev/null || true
 fi
-sudo /usr/local/bin/ffctl apply
+
+# İlk güç profilini hemen uygula
+/usr/local/bin/ffctl apply
 
 step '10/10' 'Tamamlandı'
-echo 'FF Power Manager ve Lenovo ToF Presence servisi etkinleştirildi.'
-echo 'Uygulama: ff-power-manager'
-echo 'CLI kontrol: ffctl status'
-echo 'Kaldırma: ./uninstall.sh'
+echo '==================================================================='
+echo '  FF Power Manager (C & x86_64 Assembly Sürümü) Başarıyla Kuruldu! '
+echo '==================================================================='
+echo '  ✓ Canlı Terminal Arayüzü  : ff-tui  (veya ffctl tui)'
+echo '  ✓ Hızlı Donanım Durumu     : ffctl status'
+echo '  ✓ Canlı ToF Telemetrisi    : ffctl sensor live'
+echo '  ✓ GTK4 / Libadwaita GUI    : ff-power-manager'
+echo '  ✓ Otomatik Başlangıç       : Etkin (Bilgisayar açılışında devrede)'
+echo '  ✓ Kaldırma                 : ./uninstall.sh'
+echo '==================================================================='

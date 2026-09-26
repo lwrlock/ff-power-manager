@@ -18,6 +18,8 @@ sudo rm -f \
   /etc/polkit-1/rules.d/50-ff-power-manager.rules \
   /usr/local/bin/ff-power-manager \
   /usr/local/bin/ffctl \
+  /usr/local/bin/ff-tui \
+  /usr/local/bin/ff-presence-sensor \
   /usr/local/sbin/fpmctl \
   /usr/local/share/applications/com.ff.PowerManager.desktop \
   /usr/local/share/metainfo/com.ff.PowerManager.metainfo.xml

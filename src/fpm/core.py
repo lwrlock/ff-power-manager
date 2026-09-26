@@ -75,8 +75,8 @@ PRESETS = {
             'hwp_dynamic_boost': 'system',
         },
         'maximum_battery': {
-            'gnome_profile': 'power-saver',
-            'epp': 'power',
+            'gnome_profile': 'balanced',
+            'epp': 'balance_power',
             'turbo': True,
             'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
@@ -375,7 +375,10 @@ def apply(mode: str, cfg: dict | None = None) -> None:
         (RUN_DIR / 'power.mode').write_text(mode)
     except Exception:
         pass
-    set_profile(s['gnome_profile'])
+    gnome_prof = s['gnome_profile']
+    if mode == 'battery' and gnome_prof == 'power-saver':
+        gnome_prof = 'balanced'
+    set_profile(gnome_prof)
     set_epp(s['epp'])
     set_turbo(s['turbo'])
     set_hwp_dynamic_boost(s['hwp_dynamic_boost'])
