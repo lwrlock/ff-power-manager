@@ -311,34 +311,43 @@ static void ensure_sensor_enabled_by_default(void) {
 
 static void apply_profile(int profile_id, bool battery_mode) {
     const char *prof_name = "Default";
-    char cmd[256];
+    const char *arg = "battery";
+
 
     if (battery_mode) {
         if (profile_id == 1) {
             prof_name = "Balanced Battery";
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply battery >/dev/null 2>&1 || true");
+            arg = "battery";
         } else if (profile_id == 2) {
             prof_name = "Max Battery Saver";
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply max_battery >/dev/null 2>&1 || true");
+            arg = "max_battery";
         } else {
             prof_name = "Responsive Battery";
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply responsive_battery >/dev/null 2>&1 || true");
+            arg = "responsive_battery";
         }
     } else {
         if (profile_id == 1) {
             prof_name = "Standard AC";
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply ac >/dev/null 2>&1 || true");
+            arg = "ac";
         } else if (profile_id == 2) {
             prof_name = "Extreme Performance";
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply extreme_performance >/dev/null 2>&1 || true");
+            arg = "extreme_performance";
         } else {
             prof_name = "Cool & Quiet AC";
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply cool_quiet >/dev/null 2>&1 || true");
+            arg = "cool_quiet";
         }
     }
 
     snprintf(g_active_profile_name, sizeof(g_active_profile_name), "%s", prof_name);
+
+    char cmd[512];
+    if (geteuid() == 0) {
+        snprintf(cmd, sizeof(cmd), "/usr/local/lib/ff-power-manager/ff-power-helper apply %s >/dev/null 2>&1", arg);
+    } else {
+        snprintf(cmd, sizeof(cmd), "/usr/local/bin/ffctl apply %s >/dev/null 2>&1 || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper apply %s >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply %s >/dev/null 2>&1", arg, arg, arg);
+    }
     system(cmd);
+
 
     /* Read back hardware values to verify */
     int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
@@ -708,7 +717,7 @@ int main(void) {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(STDIN_FILENO, &fds);
-        struct timeval tv = { .tv_sec = 0, .tv_usec = 800000 };
+        struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
 
         int sel = select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv);
         if (!g_running) break;

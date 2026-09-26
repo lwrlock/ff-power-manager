@@ -72,6 +72,11 @@ class PresenceController:
             self.sys_bus = None
         self._read_state()
         self._read_power_mode_once()
+        GLib.timeout_add_seconds(3, self._periodic_power_check)
+
+    def _periodic_power_check(self) -> bool:
+        self._read_power_mode_once()
+        return GLib.SOURCE_CONTINUE
 
     def _get_display_power_save(self) -> int:
         try:
@@ -248,17 +253,18 @@ class PresenceController:
         self._handle(state)
 
     def _read_power_mode_once(self) -> bool:
-        mode = 'ac'
+        mode = 'battery' if on_battery_from_sysfs() else 'ac'
         try:
             p = RUN_DIR / 'power.mode'
             if p.exists():
-                mode = p.read_text().strip()
-            else:
-                mode = 'battery' if on_battery_from_sysfs() else 'ac'
+                txt = p.read_text().strip()
+                if txt in ('battery', 'ac'):
+                    mode = txt
         except Exception:
             pass
         self._update_refresh_rate(mode)
         return GLib.SOURCE_REMOVE
+
 
     def _fs_changed(self, _monitor, file, _other, _event_type) -> None:
         name = pathlib.Path(file.get_path() or '').name if file else ''

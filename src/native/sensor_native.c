@@ -64,8 +64,25 @@ static void publish_state(const char *state) {
     fflush(stdout);
 }
 
+static double g_last_telemetry_time = 0.0;
+static int g_last_telemetry_dist = -1;
+static char g_last_telemetry_state[32] = "";
+
 static void publish_telemetry(const char *state, int distance_cm, int threshold_cm,
                               uint64_t packet_count, double last_sec_ago, const char *device) {
+    double now = get_monotonic_time();
+    bool state_changed = (strcmp(state, g_last_telemetry_state) != 0);
+    bool dist_changed = (abs(distance_cm - g_last_telemetry_dist) >= 5);
+    bool time_elapsed = (now - g_last_telemetry_time >= 1.5);
+
+    if (!state_changed && !time_elapsed && !dist_changed) {
+        return;
+    }
+
+    g_last_telemetry_time = now;
+    g_last_telemetry_dist = distance_cm;
+    strncpy(g_last_telemetry_state, state, sizeof(g_last_telemetry_state) - 1);
+
     mkdir(RUN_DIR, 0755);
     char json[512];
     int n = snprintf(json, sizeof(json),
@@ -85,6 +102,7 @@ static void publish_telemetry(const char *state, int distance_cm, int threshold_
         asm_atomic_write_file(TMP_TELEMETRY_FILE, TELEMETRY_FILE, json, (size_t)n);
     }
 }
+
 
 static char *locate_hidraw_device(void) {
     static char path[512];

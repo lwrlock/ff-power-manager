@@ -556,7 +556,16 @@ class MainWindow(Adw.ApplicationWindow):
         }
         mode_label = 'Batarya' if mode == 'battery' else 'Adaptör'
         preset_label = preset_tr.get(name, name)
-        self.toast(f'{mode_label} için “{preset_label}” profili seçildi.')
+
+        # Directly save and apply the chosen preset to hardware
+        self.cfg[mode].update(preset)
+        try:
+            save_and_apply_config(self.cfg)
+            self.refresh_status()
+            self.toast(f'✓ {mode_label} için “{preset_label}” profili donanıma uygulandı ve kaydedildi.')
+        except Exception as exc:
+            self.toast(f'Profil uygulama hatası: {exc}')
+
 
     def _save_mode(self, _btn, mode: str) -> None:
         ctrls = self.mode_controls.get(mode, {})

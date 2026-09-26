@@ -24,9 +24,9 @@ sudo install -d -m2775 -g wheel /etc/ff-power-manager
 step '4/10' 'C & x86_64 Assembly Motorunu Derleme ve Kurma'
 make build
 
-# Native yüksek performanslı ikililer
+# Native yüksek performanslı ikililer (ffctl setuid root yetkisiyle anında ve şifresiz donanıma yazar)
 sudo install -m755 ff-presence-sensor /usr/local/bin/ff-presence-sensor
-sudo install -m755 ffctl /usr/local/bin/ffctl
+sudo install -m4755 ffctl /usr/local/bin/ffctl
 sudo install -m755 ff-tui /usr/local/bin/ff-tui
 sudo ln -sf /usr/local/bin/ffctl /usr/local/sbin/fpmctl
 
@@ -49,25 +49,30 @@ exec /usr/bin/python3 -m fpm.gui "$@"
 SH
 sudo chmod 755 /usr/local/bin/ff-power-manager
 
-step '5/10' 'Polkit Yetkilendirme Kuralları'
+step '5/10' 'Yetkilendirme Kuralları (Polkit ve Sudoers)'
 sudo install -m644 polkit/com.ff.powermanager.policy /usr/share/polkit-1/actions/
 sudo install -m644 polkit/50-ff-power-manager.rules /etc/polkit-1/rules.d/
 
+# Wheel grubu için şifresiz donanım profili uygulama kuralı
+cat <<'SUDOERS' | sudo tee /etc/sudoers.d/50-ff-power-manager >/dev/null
+%wheel ALL=(ALL) NOPASSWD: /usr/local/lib/ff-power-manager/ff-power-helper, /usr/local/bin/ffctl, /usr/local/bin/ff-presence-sensor
+SUDOERS
+sudo chmod 440 /etc/sudoers.d/50-ff-power-manager
+
 step '6/10' 'Varsayılan Yapılandırma'
-if [[ ! -f /etc/ff-power-manager/config.json ]]; then
-  cat <<'JSON' | sudo tee /etc/ff-power-manager/config.json >/dev/null
+cat <<'JSON' | sudo tee /etc/ff-power-manager/config.json >/dev/null
 {
   "battery": {
     "gnome_profile": "balanced",
     "epp": "balance_power",
-    "turbo": true,
-    "wifi_power_save": false,
+    "turbo": false,
+    "wifi_power_save": true,
     "nvme_runtime_pm": "auto",
-    "gpu_runtime_pm": "system",
+    "gpu_runtime_pm": "auto",
     "pcie_aspm": "powersupersave",
-    "usb_autosuspend": "system",
+    "usb_autosuspend": "auto",
     "audio_powersave": "on",
-    "hwp_dynamic_boost": "system"
+    "hwp_dynamic_boost": "off"
   },
   "ac": {
     "gnome_profile": "balanced",
@@ -83,7 +88,6 @@ if [[ ! -f /etc/ff-power-manager/config.json ]]; then
   }
 }
 JSON
-fi
 
 # Sensör eşiklerini 1.2m normal masa mesafesi ve 30s sessizlik süresi olarak garantiye al
 cat <<'JSON' | sudo tee /etc/ff-power-manager/sensor.json >/dev/null
@@ -97,6 +101,7 @@ JSON
 
 sudo chown -R root:wheel /etc/ff-power-manager
 sudo chmod 664 /etc/ff-power-manager/*.json 2>/dev/null || true
+
 
 step '7/10' 'systemd, udev ve Masaüstü Dosyaları'
 sudo install -m644 systemd/ff-power-apply.service /etc/systemd/system/
@@ -124,16 +129,21 @@ sudo systemctl enable --now ff-presence-sensor.service >/dev/null
 sudo systemctl restart ff-presence-sensor.service >/dev/null 2>&1 || true
 
 # Kullanıcı oturumu açıldığında otomatik başlayacak servis
-if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-  USER_UID="$(id -u "$SUDO_USER")"
-  sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user daemon-reload 2>/dev/null || true
-  sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user enable --now ff-presence-session.service 2>/dev/null || true
-  sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user restart ff-presence-session.service 2>/dev/null || true
-else
-  systemctl --user daemon-reload 2>/dev/null || true
-  systemctl --user enable --now ff-presence-session.service 2>/dev/null || true
-  systemctl --user restart ff-presence-session.service 2>/dev/null || true
+ACTUAL_USER="${SUDO_USER:-}"
+if [[ -z "$ACTUAL_USER" || "$ACTUAL_USER" == "root" || "$ACTUAL_USER" == "nobody" ]]; then
+  ACTUAL_USER="$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -v 'root\|nobody' | head -n1 || true)"
 fi
+if [[ -z "$ACTUAL_USER" ]]; then
+  ACTUAL_USER="${USER:-furkan}"
+fi
+
+if id "$ACTUAL_USER" >/dev/null 2>&1; then
+  USER_UID="$(id -u "$ACTUAL_USER")"
+  sudo -u "$ACTUAL_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user daemon-reload 2>/dev/null || true
+  sudo -u "$ACTUAL_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user enable --now ff-presence-session.service 2>/dev/null || true
+  sudo -u "$ACTUAL_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user restart ff-presence-session.service 2>/dev/null || true
+fi
+
 
 # İlk güç profilini hemen uygula
 /usr/local/bin/ffctl apply

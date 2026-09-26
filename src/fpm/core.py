@@ -18,14 +18,14 @@ DEFAULT_CONFIG = {
     'battery': {
         'gnome_profile': 'balanced',
         'epp': 'balance_power',
-        'turbo': True,
-        'wifi_power_save': False,
+        'turbo': False,
+        'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
-        'gpu_runtime_pm': 'system',
+        'gpu_runtime_pm': 'auto',
         'pcie_aspm': 'powersupersave',
-        'usb_autosuspend': 'system',
+        'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
-        'hwp_dynamic_boost': 'system',
+        'hwp_dynamic_boost': 'off',
     },
     'ac': {
         'gnome_profile': 'balanced',
@@ -65,19 +65,19 @@ PRESETS = {
         'recommended': {
             'gnome_profile': 'balanced',
             'epp': 'balance_power',
-            'turbo': True,
-            'wifi_power_save': False,
+            'turbo': False,
+            'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
-            'gpu_runtime_pm': 'system',
+            'gpu_runtime_pm': 'auto',
             'pcie_aspm': 'powersupersave',
-            'usb_autosuspend': 'system',
+            'usb_autosuspend': 'auto',
             'audio_powersave': 'on',
-            'hwp_dynamic_boost': 'system',
+            'hwp_dynamic_boost': 'off',
         },
         'maximum_battery': {
             'gnome_profile': 'balanced',
-            'epp': 'balance_power',
-            'turbo': True,
+            'epp': 'power',
+            'turbo': False,
             'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
@@ -116,8 +116,8 @@ PRESETS = {
         'cool_quiet': {
             'gnome_profile': 'balanced',
             'epp': 'balance_power',
-            'turbo': True,
-            'wifi_power_save': False,
+            'turbo': False,
+            'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
             'pcie_aspm': 'default',
@@ -127,6 +127,7 @@ PRESETS = {
         },
     },
 }
+
 
 
 def _merge_valid(default: dict, data: object) -> dict:
@@ -278,6 +279,16 @@ def set_epp(value: str) -> None:
         return
     for p in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference'):
         write_if_changed(p, value)
+    bias_map = {
+        'power': '15',
+        'balance_power': '8',
+        'default': '6',
+        'balance_performance': '4',
+        'performance': '0',
+    }
+    if value in bias_map:
+        for p in glob.glob('/sys/devices/system/cpu/cpu*/power/energy_perf_bias'):
+            write_if_changed(p, bias_map[value])
 
 
 def set_turbo(value: bool | str) -> None:
@@ -332,6 +343,18 @@ def set_gpu(value: str) -> None:
         if vendor == '0x8086' and cls and cls.startswith('0x03'):
             write_if_changed(os.path.join(dev, 'power/control'), value)
 
+    # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6)
+    for card in glob.glob('/sys/class/drm/card*'):
+        slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
+        if os.path.exists(slpc_node):
+            write_if_changed(slpc_node, 'power_saving' if value == 'auto' else 'base')
+        boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
+        if os.path.exists(boost_node):
+            write_if_changed(boost_node, '800' if value == 'auto' else '2350')
+        min_node = os.path.join(card, 'gt_min_freq_mhz')
+        if os.path.exists(min_node):
+            write_if_changed(min_node, '100')
+
 
 def set_pcie_aspm(value: str) -> None:
     if value == 'system':
@@ -354,17 +377,30 @@ def set_audio(value: str) -> None:
     p = '/sys/module/snd_hda_intel/parameters/power_save'
     if os.path.exists(p):
         write_if_changed(p, '1' if value == 'on' else '0')
+    p_ctrl = '/sys/module/snd_hda_intel/parameters/power_save_controller'
+    if os.path.exists(p_ctrl):
+        write_if_changed(p_ctrl, 'Y' if value == 'on' else 'N')
 
 
 def optimize_touchpad() -> None:
-    patterns = [
-        '/sys/bus/i2c/devices/i2c-SYNA*/power/control',
-        '/sys/devices/pci0000:00/0000:00:15.*/power/control',
-        '/sys/devices/pci0000:00/0000:00:15.*/i2c_designware.*/power/control',
-    ]
-    for pattern in patterns:
-        for path in glob.glob(pattern):
-            write_if_changed(path, 'on')
+    # Only keep the touchpad device itself awake to prevent lag,
+    # without blocking the Intel LPSS host controller from low-power states
+    for path in glob.glob('/sys/bus/i2c/devices/i2c-SYNA*/power/control'):
+        write_if_changed(path, 'on')
+
+
+def apply_kernel_tunings(mode: str) -> None:
+    if mode == 'battery':
+        write_if_changed('/proc/sys/vm/laptop_mode', '5')
+        write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '6000')
+        write_if_changed('/proc/sys/kernel/nmi_watchdog', '0')
+        for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
+            write_if_changed(p, 'med_power_with_dipm')
+    else:
+        write_if_changed('/proc/sys/vm/laptop_mode', '0')
+        write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '1500')
+        for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
+            write_if_changed(p, 'max_performance')
 
 
 def apply(mode: str, cfg: dict | None = None) -> None:
@@ -379,6 +415,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     if mode == 'battery' and gnome_prof == 'power-saver':
         gnome_prof = 'balanced'
     set_profile(gnome_prof)
+    # Set EPP right after set_profile to ensure power-profiles-daemon cannot override it
     set_epp(s['epp'])
     set_turbo(s['turbo'])
     set_hwp_dynamic_boost(s['hwp_dynamic_boost'])
@@ -388,7 +425,9 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_pcie_aspm(s['pcie_aspm'])
     set_usb(s['usb_autosuspend'])
     set_audio(s['audio_powersave'])
+    apply_kernel_tunings(mode)
     optimize_touchpad()
+
 
 
 def on_battery_from_sysfs() -> bool:

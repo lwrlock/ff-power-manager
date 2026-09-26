@@ -259,16 +259,26 @@ static void print_status(void) {
 
 static int run_apply(const char *profile) {
     printf(COLOR_BOLD "Applying power profile '%s'...\n" COLOR_RESET, (profile && profile[0]) ? profile : "auto");
-    char cmd[256];
-    if (profile && strlen(profile) > 0) {
-        snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply %s", profile);
+    char cmd[512];
+    const char *parg = (profile && strlen(profile) > 0) ? profile : "";
+    if (geteuid() == 0) {
+        if (parg[0]) {
+            snprintf(cmd, sizeof(cmd), "/usr/local/lib/ff-power-manager/ff-power-helper apply %s", parg);
+        } else {
+            snprintf(cmd, sizeof(cmd), "/usr/local/lib/ff-power-manager/ff-power-helper apply");
+        }
     } else {
-        snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply");
+        if (parg[0]) {
+            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply %s 2>/dev/null || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper apply %s", parg, parg);
+        } else {
+            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply 2>/dev/null || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper apply");
+        }
     }
     int ret = system(cmd);
     if (ret != 0) {
         fprintf(stderr, COLOR_RED "Notice: Helper invocation returned %d. Verifying hardware sysfs state...\n" COLOR_RESET, ret);
     }
+
 
     /* Verification step: read back from actual hardware */
     int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");

@@ -16,7 +16,9 @@ sudo rm -f \
   /etc/udev/rules.d/90-ff-power-manager.rules \
   /usr/share/polkit-1/actions/com.ff.powermanager.policy \
   /etc/polkit-1/rules.d/50-ff-power-manager.rules \
+  /etc/sudoers.d/50-ff-power-manager \
   /usr/local/bin/ff-power-manager \
+
   /usr/local/bin/ffctl \
   /usr/local/bin/ff-tui \
   /usr/local/bin/ff-presence-sensor \
