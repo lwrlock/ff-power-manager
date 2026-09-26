@@ -143,30 +143,23 @@ def adaptive_silence_timeout(base: float, intervals) -> float:
     return min(60.0, max(base, median * 4.0, p90 * 2.0))
 
 
-def decode_report_4(data: bytes, threshold: int = 12) -> tuple[bool | None, int | None]:
+def decode_report_4(data: bytes, threshold_mm: int = 1200) -> tuple[bool | None, int | None]:
     """Decode Report 4 from ST VL53L1 / Intel ISH.
-    Returns (is_present, distance_raw).
-    - Offset 27..30: 0x0544 Human Presence (int32: 1 = present, 0 = absent)
-    - Offset 32: 0x04b1 Distance (uint8: <= 12 corresponds to 1.2m normal desk range)
+    Returns (is_present, distance_mm).
+    - Offset 27..28: 16-bit little-endian distance in millimeters
+    - Offset 31: Confidence percentage (0..100)
+    - Offset 32: Hardware presence flag (1 = present, 0 = absent)
     """
-    if len(data) < 31 or data[0] != REPORT_ID:
+    if len(data) < 33 or data[0] != REPORT_ID:
         return None, None
     try:
-        presence_raw = int.from_bytes(data[27:31], 'little', signed=True)
-        distance_raw = data[32] if len(data) > 32 else None
-        if presence_raw == 1:
-            # If distance exceeds 1.2m (12 dm), user is beyond normal desk range!
-            if distance_raw is not None and distance_raw > threshold:
-                return False, distance_raw
-            return True, distance_raw
-        if presence_raw == 0:
-            return False, distance_raw
-        # Fallback if presence byte is not standard 0/1: check distance (<= 12 is <= 1.2m)
-        if distance_raw is not None and 0 < distance_raw <= threshold:
-            return True, distance_raw
-        if distance_raw is not None and distance_raw > threshold:
-            return False, distance_raw
-        return True, distance_raw
+        dist_mm = int.from_bytes(data[27:29], 'little')
+        presence_flag = data[32]
+        if presence_flag == 0:
+            return False, dist_mm
+        if dist_mm > 0 and dist_mm > threshold_mm:
+            return False, dist_mm
+        return True, dist_mm
     except Exception:
         return None, None
 

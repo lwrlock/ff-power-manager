@@ -272,11 +272,11 @@ static int inspect_mode(const char *dev_path, double duration_sec) {
         if (n <= 0) continue;
 
         if (read_buf[0] == REPORT_ID) {
-            int32_t presence_raw = -1;
-            uint8_t dist_raw = 0;
-            int res = asm_decode_report(read_buf, n, &presence_raw, &dist_raw, 12);
-            printf("Report 4 (len=%zd): PresenceField=%d Dist=%u -> Result=%s\n",
-                   n, presence_raw, dist_raw,
+            int32_t pres_flag = 0;
+            uint16_t dist_mm = 0;
+            int res = asm_decode_report(read_buf, n, &pres_flag, &dist_mm, 1200);
+            printf("Report 4 (len=%zd): PresenceFlag=%d Dist=%u mm (%.1f cm) -> Result=%s\n",
+                   n, pres_flag, dist_mm, (double)dist_mm / 10.0,
                    (res == 1 ? "PRESENT" : (res == 0 ? "ABSENT" : "INVALID")));
         }
     }
@@ -429,12 +429,12 @@ int main(int argc, char *argv[]) {
         last_report_time = now;
         packet_count++;
 
-        int32_t presence_field = -1;
-        uint8_t dist_field = 0;
-        int eval = asm_decode_report(read_buf, (size_t)n, &presence_field, &dist_field, cfg.distance_threshold);
+        int32_t presence_flag = 0;
+        uint16_t dist_mm = 0;
+        int eval = asm_decode_report(read_buf, (size_t)n, &presence_flag, &dist_mm, cfg.distance_threshold * 100);
 
-        if (dist_field > 0) {
-            current_distance_cm = (int)dist_field * 10;
+        if (dist_mm > 0) {
+            current_distance_cm = (int)(dist_mm / 10);
         }
 
         /* Sensor explicitly signaled user absence or user moved beyond 1.2m */

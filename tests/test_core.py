@@ -67,32 +67,32 @@ class ConfigTests(unittest.TestCase):
         # Empty or short packet returns None
         self.assertEqual(sensor.decode_report_4(b''), (None, None))
         
-        # Valid packet with Report ID 4, presence = 1, distance = 8 (0.8m <= 1.2m)
+        # Valid packet with Report ID 4, presence = 1, distance = 750 mm (0.75m <= 1.2m)
         buf_present = bytearray(35)
         buf_present[0] = 4
-        buf_present[27:31] = (1).to_bytes(4, 'little', signed=True)
-        buf_present[32] = 8 # 0.8m
+        buf_present[27:29] = (750).to_bytes(2, 'little')
+        buf_present[31] = 100
+        buf_present[32] = 1 # present flag = 1
         is_pres, dist = sensor.decode_report_4(bytes(buf_present))
         self.assertTrue(is_pres)
-        self.assertEqual(dist, 8)
+        self.assertEqual(dist, 750)
 
-        # Presence flag 1, but user stepped away to 16 (1.6m > 1.2m) -> Absent!
+        # Presence flag 1, but user stepped away to 1500 mm (1.5m > 1.2m) -> Absent!
         buf_far = bytearray(35)
         buf_far[0] = 4
-        buf_far[27:31] = (1).to_bytes(4, 'little', signed=True)
-        buf_far[32] = 16 # 1.6m
+        buf_far[27:29] = (1500).to_bytes(2, 'little')
+        buf_far[31] = 50
+        buf_far[32] = 1
         is_pres, dist = sensor.decode_report_4(bytes(buf_far))
         self.assertFalse(is_pres)
-        self.assertEqual(dist, 16)
+        self.assertEqual(dist, 1500)
 
         # Valid packet with Report ID 4 and presence = 0
         buf_absent = bytearray(35)
         buf_absent[0] = 4
-        buf_absent[27:31] = (0).to_bytes(4, 'little', signed=True)
-        buf_absent[32] = 10
+        buf_absent[32] = 0
         is_pres, dist = sensor.decode_report_4(bytes(buf_absent))
         self.assertFalse(is_pres)
-        self.assertEqual(dist, 10)
 
 
 if __name__ == '__main__':

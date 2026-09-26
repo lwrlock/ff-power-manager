@@ -3,8 +3,14 @@
  * Handcrafted assembly routines for ST VL53L1 HID Report 4 parsing,
  * direct Linux syscalls, and low-latency sysfs operations.
  *
+ * ST VL53L1 / Intel ISH Report 4 Layout (Len=35 bytes):
+ *   Offset 00     : Report ID (0x04)
+ *   Offset 27..28 : Distance in millimeters (uint16_t little-endian)
+ *   Offset 31     : Signal Confidence / Quality percentage (0..100%)
+ *   Offset 32     : Presence Flag (uint8_t: 1 = detected, 0 = absent)
+ *
  * ABI: System V AMD64 ABI
- * Registers: rdi (arg1), rsi (arg2), rdx (arg3), rcx (arg4), r8 (arg5), r9 (arg6)
+ * Registers: rdi (arg1), rsi (arg2), rdx (arg3), rcx (arg4), r8 (arg5)
  * Return: rax / eax
  */
 
@@ -14,20 +20,20 @@
 
 /*
  * int asm_decode_report(const uint8_t *data, size_t len,
- *                       int32_t *presence_out, uint8_t *dist_out,
- *                       int32_t dist_thresh)
+ *                       int32_t *presence_out, uint16_t *dist_mm_out,
+ *                       int32_t dist_thresh_mm)
  *
  * Arguments:
  *   rdi: data pointer
- *   rsi: length of data buffer
- *   rdx: pointer to store raw presence (int32_t*) or NULL
- *   rcx: pointer to store raw distance (uint8_t*) or NULL
- *   r8d: distance threshold in decimeters (e.g., 24 for 2.4m)
+ *   rsi: length of data buffer (must be >= 33)
+ *   rdx: pointer to store raw presence flag (int32_t*) or NULL
+ *   rcx: pointer to store raw distance in mm (uint16_t*) or NULL
+ *   r8d: distance threshold in mm (e.g. 1200 for 1.2m desk range)
  *
  * Returns:
- *   1  : User Present (within range)
- *   0  : User Absent (explicit absence or distance > threshold)
- *  -1  : Invalid packet / too short
+ *   1  : User Present (Presence==1 and dist_mm <= threshold)
+ *   0  : User Absent (Presence==0 or dist_mm > threshold)
+ *  -1  : Invalid packet / too short (< 33 bytes)
  *  -2  : Not Report ID 4
  */
 asm_decode_report:
@@ -35,66 +41,47 @@ asm_decode_report:
     testq   %rdi, %rdi
     jz      .L_err_invalid
 
-    /* Check minimum report length (at least 31 bytes for presence) */
-    cmpq    $31, %rsi
+    /* Check minimum report length (at least 33 bytes) */
+    cmpq    $33, %rsi
     jb      .L_err_invalid
 
     /* Check Report ID == 4 */
     cmpb    $4, (%rdi)
     jne     .L_err_not_report4
 
-    /* Extract 32-bit little-endian presence value at offset 27 */
-    movl    27(%rdi), %eax
+    /* Extract 16-bit little-endian distance in mm at offset 27 */
+    movzwl  27(%rdi), %eax
+
+    /* Store distance in mm if pointer provided */
+    testq   %rcx, %rcx
+    jz      .L_check_presence_flag
+    movw    %ax, (%rcx)
+
+.L_check_presence_flag:
+    /* Extract presence byte at offset 32 */
+    movzbl  32(%rdi), %r9d
 
     /* Store presence if pointer provided */
     testq   %rdx, %rdx
-    jz      .L_check_dist
-    movl    %eax, (%rdx)
-
-.L_check_dist:
-    /* Default distance = 0 */
-    xorl    %r9d, %r9d
-
-    /* Check if packet contains distance at offset 32 */
-    cmpq    $33, %rsi
-    jb      .L_eval_presence
-
-    /* Extract distance byte at offset 32 */
-    movzbl  32(%rdi), %r9d
-
-.L_eval_presence:
-    /* Store distance if pointer provided */
-    testq   %rcx, %rcx
     jz      .L_decide
-    movb    %r9b, (%rcx)
+    movl    %r9d, (%rdx)
 
 .L_decide:
-    /* If distance threshold is <= 0, default to 12 (1.2 meters desk range) */
+    /* If distance threshold is <= 0, default to 1200 mm (1.2 meters) */
     testl   %r8d, %r8d
     jg      .L_thresh_ok
-    movl    $12, %r8d
+    movl    $1200, %r8d
 
 .L_thresh_ok:
-    /* Case 1: Presence flag explicitly 1 */
-    cmpl    $1, %eax
-    je      .L_present_check_dist
-
-    /* Case 2: Presence flag explicitly 0 (sensor says absent) */
-    testl   %eax, %eax
+    /* If presence flag is 0, user is absent */
+    testl   %r9d, %r9d
     jz      .L_return_absent
 
-    /* Case 3: Unknown presence flag, rely on distance byte */
-    testl   %r9d, %r9d
-    jz      .L_return_present           /* No distance reading -> assume present */
-    cmpl    %r8d, %r9d
-    jbe     .L_return_present           /* distance <= threshold -> present */
-    jmp     .L_return_absent            /* distance > threshold -> absent */
-
-.L_present_check_dist:
-    /* Even if presence is 1, if distance > 0 and distance > threshold -> away */
-    testl   %r9d, %r9d
+    /* If presence flag is 1, check distance against threshold */
+    /* If dist_mm > 0 and dist_mm > threshold -> away/absent */
+    testl   %eax, %eax
     jz      .L_return_present
-    cmpl    %r8d, %r9d
+    cmpl    %r8d, %eax
     ja      .L_return_absent
 
 .L_return_present:
@@ -121,12 +108,6 @@ asm_decode_report:
  *
  * Reads a single integer from a sysfs file using raw Linux syscalls
  * (sys_open, sys_read, sys_close) with zero libc buffer overhead.
- *
- * Arguments:
- *   rdi: null-terminated path
- *
- * Returns:
- *   parsed integer, or -1 on error
  */
 .global asm_fast_read_sysfs_int
 .type asm_fast_read_sysfs_int, @function
@@ -229,9 +210,6 @@ asm_fast_read_sysfs_int:
 /*
  * void asm_atomic_write_file(const char *tmp_path, const char *final_path,
  *                            const char *content, size_t len)
- *
- * Atomically writes content to tmp_path and renames to final_path
- * using raw syscalls: SYS_open, SYS_write, SYS_fsync, SYS_close, SYS_rename.
  */
 .global asm_atomic_write_file
 .type asm_atomic_write_file, @function
