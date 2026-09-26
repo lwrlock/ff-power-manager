@@ -26,10 +26,11 @@ SYSTEM_SENSOR = 'ff-presence-sensor.service'
 USER_PRESENCE = 'ff-presence-session.service'
 
 DEFAULT_PRESENCE = {
-    'away_confirm': 2.0,
-    'away_delay': 0,
+    'enabled': True,
+    'away_confirm': 3.0,
+    'away_delay': 10,
     'wake_on_approach': True,
-    'wake_only_if_fpm_off': True,
+    'wake_only_if_fpm_off': False,
     'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
@@ -239,29 +240,37 @@ class MainWindow(Adw.ApplicationWindow):
         status = Adw.PreferencesGroup(title='Lenovo İnsan Varlığı Algılama (ToF)', description='Intel ISH 8087:0AC2 içindeki ST VL53L1 ToF sensörü. RGB kamera kesinlikle açılmaz.')
         page.add(status)
         self.presence_service_row = Adw.SwitchRow(title='Presence + OLED Otomasyonu', subtitle='Uzaklaşınca ekranı karart, yaklaşınca geri aç.')
-        self.presence_service_row.set_active(is_active(SYSTEM_SENSOR) and is_active(USER_PRESENCE, user=True))
+        is_sensor_active = is_active(SYSTEM_SENSOR)
+        enabled_setting = bool(self.pcfg.get('enabled', True))
+        self.presence_service_row.set_active(enabled_setting and is_sensor_active)
         self.presence_service_row.connect('notify::active', self._presence_toggle)
         status.add(self.presence_service_row)
 
         timing = Adw.PreferencesGroup(title='Sensör Hassasiyet ve Zamanlama')
         page.add(timing)
-        self.silence_spin = Gtk.SpinButton.new_with_range(2.0, 10.0, 0.1)
+        self.silence_spin = Gtk.SpinButton.new_with_range(4.0, 60.0, 1.0)
         self.silence_spin.set_digits(1)
-        self.silence_spin.set_value(float(self.scfg.get('silence_timeout', 4.0)))
-        row = self._action_row('Sensör Sessizlik Eşiği (sn)', 'Bu süre dolmadan kullanıcı “uzakta” sayılmaz.')
+        self.silence_spin.set_value(float(self.scfg.get('silence_timeout', 15.0)))
+        row = self._action_row('Sensör Sessizlik Eşiği (sn)', 'Bu süre boyunca yeni hareket algılanmazsa uzaklaşma kontrolü başlar.')
         row.add_suffix(self.silence_spin)
         timing.add(row)
 
         self.confirm_reports_spin = Gtk.SpinButton.new_with_range(1, 5, 1)
-        self.confirm_reports_spin.set_value(int(self.scfg.get('present_confirm_reports', 2)))
-        row = self._action_row('Yaklaşma Doğrulama Paketleri', 'Yanlış uyanmaları engellemek için gereken ardışık ToF sinyal sayısı.')
+        self.confirm_reports_spin.set_value(int(self.scfg.get('present_confirm_reports', 1)))
+        row = self._action_row('Yaklaşma Doğrulama Paketleri', 'Ekranın anında açılması için gereken ToF sinyal sayısı (1 = anında açılış).')
         row.add_suffix(self.confirm_reports_spin)
         timing.add(row)
 
-        self.away_confirm_spin = Gtk.SpinButton.new_with_range(0.0, 10.0, 0.5)
+        self.away_delay_spin = Gtk.SpinButton.new_with_range(0.0, 120.0, 5.0)
+        self.away_delay_spin.set_value(float(self.pcfg.get('away_delay', 10.0)))
+        row = self._action_row('Uzaklaşma Bekleme Süresi (sn)', 'Sensör boş algıladıktan sonra ekranın kapanması için beklenecek süre.')
+        row.add_suffix(self.away_delay_spin)
+        timing.add(row)
+
+        self.away_confirm_spin = Gtk.SpinButton.new_with_range(0.5, 30.0, 0.5)
         self.away_confirm_spin.set_digits(1)
-        self.away_confirm_spin.set_value(float(self.pcfg.get('away_confirm', 2.0)))
-        row = self._action_row('Uzaklaşma Kararlılık Doğrulaması (sn)', 'Ani baş hareketlerinde ekranın kararmasını önler.')
+        self.away_confirm_spin.set_value(float(self.pcfg.get('away_confirm', 3.0)))
+        row = self._action_row('Uzaklaşma Kararlılık Doğrulaması (sn)', 'Ani baş hareketlerinde ekranın hemen kararmasını önleyen ek teyit süresi.')
         row.add_suffix(self.away_confirm_spin)
         timing.add(row)
 
@@ -392,6 +401,12 @@ class MainWindow(Adw.ApplicationWindow):
         if self._presence_syncing:
             return
         active = row.get_active()
+        self.pcfg['enabled'] = active
+        try:
+            USER_CFG.parent.mkdir(parents=True, exist_ok=True)
+            USER_CFG.write_text(json.dumps(self.pcfg, indent=2) + '\n')
+        except Exception:
+            pass
         sys_action = 'enable-now' if active else 'disable-now'
         user_action = 'enable' if active else 'disable'
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
@@ -404,6 +419,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.refresh_status()
 
     def _save_presence(self, _btn) -> None:
+        active = self.presence_service_row.get_active()
+        self.pcfg['enabled'] = active
         self.scfg['silence_timeout'] = self.silence_spin.get_value()
         self.scfg['present_confirm_reports'] = int(self.confirm_reports_spin.get_value())
         try:
@@ -413,14 +430,33 @@ class MainWindow(Adw.ApplicationWindow):
             return
 
         self.pcfg['away_confirm'] = self.away_confirm_spin.get_value()
+        self.pcfg['away_delay'] = int(self.away_delay_spin.get_value())
         self.pcfg['auto_refresh_rate'] = self.refresh_switch.get_active()
         for k, sw in self.presence_switches.items():
             self.pcfg[k] = sw.get_active()
         try:
             USER_CFG.parent.mkdir(parents=True, exist_ok=True)
             USER_CFG.write_text(json.dumps(self.pcfg, indent=2) + '\n')
-            subprocess.run(['/usr/bin/systemctl', '--user', 'restart', USER_PRESENCE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.toast('Ekran ve presence ayarları güncellendi.')
+
+            sys_action = 'enable-now' if active else 'disable-now'
+            user_action = 'enable' if active else 'disable'
+            helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
+            if helper.exists() and os.geteuid() != 0:
+                subprocess.run(['pkexec', str(helper), 'sensor-service', sys_action], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if active:
+                    subprocess.run(['pkexec', str(helper), 'sensor-service', 'restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                act = ['enable', '--now'] if active else ['disable', '--now']
+                subprocess.run(['/usr/bin/systemctl', *act, SYSTEM_SENSOR], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if active:
+                    subprocess.run(['/usr/bin/systemctl', 'restart', SYSTEM_SENSOR], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            subprocess.run(['/usr/bin/systemctl', '--user', user_action, '--now', USER_PRESENCE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if active:
+                subprocess.run(['/usr/bin/systemctl', '--user', 'restart', USER_PRESENCE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            self.refresh_status()
+            self.toast('Ekran ve presence ayarları güncellendi ve uygulandı.')
         except Exception as e:
             self.toast(f'Hata: {e}')
 
@@ -431,6 +467,11 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             subprocess.run(['/usr/bin/systemctl', 'stop', SYSTEM_SENSOR], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['/usr/bin/systemctl', '--user', 'stop', USER_PRESENCE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.pcfg = deepcopy(DEFAULT_PRESENCE)
+        try:
+            USER_CFG.write_text(json.dumps(self.pcfg, indent=2) + '\n')
+        except Exception:
+            pass
         self.cfg['battery'] = deepcopy(PRESETS['battery']['recommended'])
         self.cfg['ac'] = deepcopy(PRESETS['ac']['recommended'])
         try:

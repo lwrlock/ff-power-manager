@@ -62,9 +62,9 @@ def cmd_save_sensor(data_str: str | None = None) -> int:
         atomic_json_write(
             SENSOR_CONFIG_PATH,
             {
-                "silence_timeout": max(2.0, min(10.0, val)),
+                "silence_timeout": max(4.0, min(60.0, val)),
                 "present_confirm_reports": max(1, min(5, reports)),
-                "present_confirm_window": max(1.0, min(8.0, win)),
+                "present_confirm_window": max(1.0, min(15.0, win)),
             },
         )
         return 0

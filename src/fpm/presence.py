@@ -13,10 +13,11 @@ from .core import RUN_DIR, STATE_FILE, on_battery_from_sysfs
 
 CONF = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
 DEFAULT = {
-    'away_confirm': 2.0,
-    'away_delay': 0,
+    'enabled': True,
+    'away_confirm': 3.0,
+    'away_delay': 10,
     'wake_on_approach': True,
-    'wake_only_if_fpm_off': True,
+    'wake_only_if_fpm_off': False,
     'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
@@ -35,13 +36,13 @@ def load_config() -> dict:
     except Exception:
         pass
     try:
-        out['away_confirm'] = max(0.0, min(10.0, float(out['away_confirm'])))
+        out['away_confirm'] = max(0.0, min(30.0, float(out['away_confirm'])))
     except Exception:
-        out['away_confirm'] = 2.0
+        out['away_confirm'] = 3.0
     try:
-        out['away_delay'] = max(0, min(120, int(out['away_delay'])))
+        out['away_delay'] = max(0, min(300, int(out['away_delay'])))
     except Exception:
-        out['away_delay'] = 0
+        out['away_delay'] = 10
     return out
 
 
@@ -58,6 +59,33 @@ class PresenceController:
         self.monitor.connect('changed', self._fs_changed)
         self._read_state()
         self._read_power_mode_once()
+
+    def _get_display_power_save(self) -> int:
+        try:
+            res = self.session.call_sync(
+                'org.gnome.Mutter.DisplayConfig',
+                '/org/gnome/Mutter/DisplayConfig',
+                'org.freedesktop.DBus.Properties',
+                'Get',
+                GLib.Variant('(ss)', ('org.gnome.Mutter.DisplayConfig', 'PowerSaveMode')),
+                None, Gio.DBusCallFlags.NONE, 1000, None,
+            )
+            return int(res.unpack()[0])
+        except Exception:
+            return 0
+
+    def _get_idletime_ms(self) -> int:
+        try:
+            res = self.session.call_sync(
+                'org.gnome.Mutter.IdleMonitor',
+                '/org/gnome/Mutter/IdleMonitor/Core',
+                'org.gnome.Mutter.IdleMonitor',
+                'GetIdletime',
+                None, None, Gio.DBusCallFlags.NONE, 1000, None,
+            )
+            return int(res.unpack()[0])
+        except Exception:
+            return 999999999
 
     def _set_display(self, on: bool) -> None:
         self.session.call_sync(
@@ -134,6 +162,14 @@ class PresenceController:
         if current != 'absent':
             return GLib.SOURCE_REMOVE
 
+        # Safety check: if user was active on keyboard/touchpad, do not blank screen!
+        idletime_ms = self._get_idletime_ms()
+        min_idle_ms = max(10000, int(self.cfg.get('away_delay', 10) * 1000))
+        if idletime_ms < min_idle_ms:
+            # User is active; postpone check
+            self.timer = GLib.timeout_add(5000, self._away_fire)
+            return GLib.SOURCE_REMOVE
+
         if self.cfg.get('lock_on_away'):
             self._lock()
         if self.cfg.get('screen_off_on_away'):
@@ -153,22 +189,22 @@ class PresenceController:
         if state == 'present':
             self._cancel_timer()
             allowed = bool(self.cfg.get('wake_on_approach', True))
-            only_ours = bool(self.cfg.get('wake_only_if_fpm_off', True))
-            if allowed and (self.screen_off_by_fpm or not only_ours):
+            only_ours = bool(self.cfg.get('wake_only_if_fpm_off', False))
+            display_mode = self._get_display_power_save()
+            if allowed and (display_mode != 0 or self.screen_off_by_fpm or not only_ours):
                 try:
                     self._set_display(True)
                     self.screen_off_by_fpm = False
                 except Exception:
                     pass
+            elif display_mode == 0:
+                self.screen_off_by_fpm = False
         elif state == 'absent':
             self._cancel_timer()
-            confirm = float(self.cfg.get('away_confirm', 2.0))
-            extra = int(self.cfg.get('away_delay', 0))
-            total = max(0.0, confirm + extra)
-            if total <= 0:
-                self._away_fire()
-            else:
-                self.timer = GLib.timeout_add(max(1, int(total * 1000)), self._away_fire)
+            confirm = float(self.cfg.get('away_confirm', 3.0))
+            extra = int(self.cfg.get('away_delay', 10))
+            total = max(1.0, confirm + extra)
+            self.timer = GLib.timeout_add(int(total * 1000), self._away_fire)
         elif state in ('disabled', 'error'):
             self._cancel_timer()
 

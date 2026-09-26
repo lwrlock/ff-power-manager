@@ -111,11 +111,18 @@ echo 'Python ve modül kontrolü: Başarılı'
 
 step '9/10' 'Servisleri Yükleme ve Güç Profilini Uygulama'
 sudo systemctl daemon-reload
-systemctl --user daemon-reload 2>/dev/null || true
 sudo udevadm control --reload-rules
 sudo systemctl enable ff-power-apply.service >/dev/null
 sudo systemctl enable --now ff-presence-sensor.service >/dev/null
-systemctl --user enable --now ff-presence-session.service >/dev/null 2>&1 || true
+
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  USER_UID="$(id -u "$SUDO_USER")"
+  sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user daemon-reload 2>/dev/null || true
+  sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_UID}/bus" systemctl --user enable --now ff-presence-session.service 2>/dev/null || true
+else
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user enable --now ff-presence-session.service 2>/dev/null || true
+fi
 sudo /usr/local/bin/ffctl apply
 
 step '10/10' 'Tamamlandı'

@@ -1,6 +1,6 @@
 [Unit]
 Description=FF Power Manager - GNOME OLED presence controller
-After=graphical-session.target
+After=gnome-session.target graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
@@ -11,4 +11,4 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target default.target

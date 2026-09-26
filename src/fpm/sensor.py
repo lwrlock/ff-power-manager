@@ -131,16 +131,16 @@ def adaptive_silence_timeout(base: float, intervals) -> float:
     """Return a conservative silence threshold from recent Report 4 cadence.
 
     The Lenovo firmware occasionally leaves multi-second gaps even while the
-    user is still present. A fixed 1-2 s timeout therefore causes state
-    flapping. The configured value is a *floor*; recent cadence can only make
+    user is still present. A fixed short timeout therefore causes state
+    flapping. The configured value is a floor; recent cadence can only make
     the timeout longer, never shorter.
     """
-    vals = sorted(float(x) for x in intervals if 0.05 <= float(x) <= 10.0)
+    vals = sorted(float(x) for x in intervals if 0.05 <= float(x) <= 20.0)
     if len(vals) < 4:
         return base
     median = statistics.median(vals)
     p90 = vals[max(0, min(len(vals) - 1, math.ceil(len(vals) * 0.90) - 1))]
-    return min(10.0, max(base, median * 4.0, p90 * 1.8))
+    return min(60.0, max(base, median * 4.0, p90 * 2.0))
 
 
 def _stop(*_):
@@ -154,12 +154,12 @@ def run_daemon() -> None:
         raise RuntimeError('Intel ISH 8087:0AC2 hidraw bulunamadı')
 
     cfg = load_sensor_config()
-    silence_floor = float(cfg.get('silence_timeout', 4.0))
-    silence_floor = max(2.0, min(10.0, silence_floor))
-    confirm_reports = int(cfg.get('present_confirm_reports', 2))
+    silence_floor = float(cfg.get('silence_timeout', 15.0))
+    silence_floor = max(4.0, min(60.0, silence_floor))
+    confirm_reports = int(cfg.get('present_confirm_reports', 1))
     confirm_reports = max(1, min(5, confirm_reports))
-    confirm_window = float(cfg.get('present_confirm_window', 3.0))
-    confirm_window = max(1.0, min(8.0, confirm_window))
+    confirm_window = float(cfg.get('present_confirm_window', 6.0))
+    confirm_window = max(1.0, min(15.0, confirm_window))
 
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
     original = None

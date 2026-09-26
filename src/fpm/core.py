@@ -42,9 +42,9 @@ DEFAULT_CONFIG = {
 }
 
 DEFAULT_SENSOR_CONFIG = {
-    'silence_timeout': 4.0,
-    'present_confirm_reports': 2,
-    'present_confirm_window': 3.0,
+    'silence_timeout': 15.0,
+    'present_confirm_reports': 1,
+    'present_confirm_window': 6.0,
 }
 
 ALLOWED = {

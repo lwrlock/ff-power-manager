@@ -37,7 +37,7 @@ class ConfigTests(unittest.TestCase):
     def test_adaptive_silence_expands_for_bursty_reports(self):
         value = sensor.adaptive_silence_timeout(4.0, [0.8, 0.9, 1.0, 2.8, 1.1, 1.0])
         self.assertGreater(value, 4.0)
-        self.assertLessEqual(value, 10.0)
+        self.assertLessEqual(value, 60.0)
 
     @mock.patch('fpm.core.read_text')
     def test_current_refresh_rate_formatting(self, mock_read):
