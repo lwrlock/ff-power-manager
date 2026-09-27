@@ -50,7 +50,7 @@ def main(argv=None):
         usage(); return 2
     cmd = argv[0]
     if os.geteuid() != 0 and cmd != 'status':
-        print('Bu komut root/pkexec ile çalıştırılmalı.', file=sys.stderr)
+        print('This command must be run with root / pkexec privileges.', file=sys.stderr)
         return 1
 
     if cmd == 'status':
@@ -113,7 +113,7 @@ def main(argv=None):
             usage(); return 2
         value = float(argv[1])
         if not 2.0 <= value <= 10.0:
-            print('timeout 2.0-10.0 saniye olmalı', file=sys.stderr); return 2
+            print('timeout must be between 2.0 and 10.0 seconds', file=sys.stderr); return 2
         save_sensor_config({'silence_timeout': value})
         if systemctl('is-active', '--quiet', SYSTEM_SENSOR) == 0:
             systemctl('restart', SYSTEM_SENSOR)
@@ -128,11 +128,11 @@ def main(argv=None):
         reports = int(argv[2])
         window = float(argv[3])
         if not 2.0 <= silence <= 10.0:
-            print('silence 2.0-10.0 saniye olmalı', file=sys.stderr); return 2
+            print('silence must be between 2.0 and 10.0 seconds', file=sys.stderr); return 2
         if not 1 <= reports <= 5:
-            print('reports 1-5 olmalı', file=sys.stderr); return 2
+            print('reports must be between 1 and 5', file=sys.stderr); return 2
         if not 1.0 <= window <= 8.0:
-            print('window 1.0-8.0 saniye olmalı', file=sys.stderr); return 2
+            print('window must be between 1.0 and 8.0 seconds', file=sys.stderr); return 2
         save_sensor_config({
             'silence_timeout': silence,
             'present_confirm_reports': reports,

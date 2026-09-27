@@ -22,7 +22,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "FF Power Manager",
-    "softwareVersion": "1.1.0",
+    "softwareVersion": "1.2.0",
     "operatingSystem": "Linux (Fedora, GNOME, Wayland)",
     "applicationCategory": "UtilitiesApplication",
     "description": "MacBook-grade Linux power profile manager and Lenovo ToF presence sensor engine in C and x86_64 Assembly.",
@@ -242,6 +242,7 @@
         <span class="badge">C &amp; x86_64 ASM Engine</span>
         <span class="badge green">&#x26A1; MacBook-Grade Tuning</span>
         <span class="badge ai">&#x1F916; AI-Assisted</span>
+        <span class="badge">v1.2.0</span>
       </div>
       <h1>FF Power Manager</h1>
       <p class="subtitle">
@@ -250,7 +251,7 @@
 
       <div class="cta-group">
         <a href="https://github.com/lwrlock/ff-power-manager" class="btn btn-primary">&#x1F517; View on GitHub</a>
-        <a href="https://github.com/lwrlock/ff-power-manager/releases/tag/v1.1.0" class="btn btn-outline">&#x1F4E6; Latest Release (v1.1.0)</a>
+        <a href="https://github.com/lwrlock/ff-power-manager/releases/tag/v1.2.0" class="btn btn-outline">&#x1F4E6; Latest Release (v1.2.0)</a>
       </div>
 
       <div class="terminal-box">
@@ -276,6 +277,36 @@
         </div>
 
         <div class="card">
+          <div class="card-icon">&#x1F6E1;</div>
+          <h3>Lenovo IdeaPad Integration (VPC2004)</h3>
+          <p>Single-click hardware control for 80% Battery Conservation Mode (protects chemical cell lifespan), Fn-Lock hotkeys, Always-On USB charging, and ACPI platform profiles.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F50B;</div>
+          <h3>Battery Health &amp; Analytics</h3>
+          <p>Real-time hardware fuel-gauge diagnostics: True factory design capacity (Wh), cycle counter, degradation percentage, voltage telemetry, and charge mode via <code>ffctl health</code>.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F453;</div>
+          <h3>GNOME Top Bar Quick Power Indicator</h3>
+          <p>Lightweight GNOME Shell extension displaying live wattage draw (<code>⚡ 5.2 W</code>) in the top panel with a quick-switch popover for profiles, ToF sensor, and conservation toggles.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F3A8;</div>
+          <h3>Samsung 2.8K OLED Screen Care</h3>
+          <p>Anti-burn-in engine with subtle inactivity dimming (45s timeout) and pure black (#000000) 0W pixel shutdown when walking away, preserving organic emitters and saving battery.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F680;</div>
+          <h3>Auto Dynamic Boost &amp; GameMode</h3>
+          <p>Zero-overhead process watcher detects gaming (Steam, Gamescope, Lutris), 3D renderers (Blender, OBS), and compilers (gcc, cargo, clang) to auto-engage performance mode.</p>
+        </div>
+
+        <div class="card">
           <div class="card-icon">&#x1F3AC;</div>
           <h3>Zero-Stutter Intel Arc GPU &amp; VA-API</h3>
           <p>Eliminates video stuttering in GNOME balanced mode by enforcing an 800 MHz hardware base clock floor and unlocking 2350 MHz boost, paired with hardware Intel iHD VA-API decoding.</p>
@@ -294,21 +325,15 @@
         </div>
 
         <div class="card">
-          <div class="card-icon">&#x1F680;</div>
-          <h3>Hardware &amp; System Tuning</h3>
-          <p>Enforces PCIe ASPM powersupersave, auto runtime PM across 60 PCI devices, Intel Wi-Fi 7 power save, NVMe APST PS4 deep sleep, modern ZRAM zstd compression, and Google TCP BBR networking.</p>
-        </div>
-
-        <div class="card">
           <div class="card-icon">&#x1F4CA;</div>
           <h3>btop-Style TUI Dashboard</h3>
-          <p>Interactive terminal dashboard (<code>ff-tui</code>) with single-key profile switching, live millimeter radar stream, and real-time sysfs hardware verification.</p>
+          <p>Interactive terminal dashboard (<code>ff-tui</code>) with single-key profile switching, 80% conservation toggle (<code>[K]</code>), live millimeter radar stream, and real-time sysfs hardware verification.</p>
         </div>
 
         <div class="card">
-          <div class="card-icon">&#x1F3A8;</div>
+          <div class="card-icon">&#x1F5A5;</div>
           <h3>Modern GTK4 / Libadwaita GUI</h3>
-          <p>Sleek desktop application with hero telemetry cards, animated distance progress bar, system tray integration, and GDM login screen wallpaper synchronization.</p>
+          <p>Sleek desktop application with hero telemetry cards, Lenovo hardware switches, Battery Health analytics card, and ToF radar visualizations.</p>
         </div>
       </div>
     </section>
@@ -328,6 +353,21 @@
             <td><code>ffctl status</code></td>
             <td>Instant hardware status (Watts, battery %, refresh rate, CPU EPP, ToF distance).</td>
             <td>&lt; 0.8 ms (Native C)</td>
+          </tr>
+          <tr>
+            <td><code>ffctl health</code></td>
+            <td>Display factory design capacity, full capacity, cycle count, and health score.</td>
+            <td>&lt; 0.5 ms (Native C)</td>
+          </tr>
+          <tr>
+            <td><code>ffctl lenovo</code></td>
+            <td>Inspect Lenovo IdeaPad hardware integration status (Conservation, Fn-lock, USB charge).</td>
+            <td>Direct Hardware Sysfs</td>
+          </tr>
+          <tr>
+            <td><code>ffctl conservation on|off</code></td>
+            <td>Toggle 80% battery conservation mode to prolong battery health.</td>
+            <td>Instant Sysfs</td>
           </tr>
           <tr>
             <td><code>ffctl sensor live</code></td>

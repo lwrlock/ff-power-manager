@@ -64,25 +64,25 @@ def get_feature(fd: int) -> bytearray:
     buf[0] = REPORT_ID
     ret = fcntl.ioctl(fd, _get_feature_ioctl(FEATURE_LEN), buf, True)
     if not isinstance(ret, int) or ret <= 0:
-        raise RuntimeError('Feature Report 4 okunamadı')
+        raise RuntimeError('Failed to read Feature Report 4')
     return buf
 
 
 def set_feature(fd: int, buf: bytearray) -> None:
     ret = fcntl.ioctl(fd, _set_feature_ioctl(len(buf)), buf, True)
     if not isinstance(ret, int) or ret <= 0:
-        raise RuntimeError('Feature Report 4 yazılamadı')
+        raise RuntimeError('Failed to write Feature Report 4')
 
 
 def validate_sensor(buf: bytearray) -> None:
     if len(buf) < 16 or buf[0] != REPORT_ID:
-        raise RuntimeError('Beklenmeyen Intel ISH Report 4 formatı')
+        raise RuntimeError('Unexpected Intel ISH Report 4 format')
     raw = bytes(buf)
     if (b'V\x00L\x005\x003\x00L\x001\x00' not in raw and
             b'S\x00T\x00_\x00M\x00I\x00C\x00R\x00O\x00' not in raw):
-        raise RuntimeError('Beklenen ST VL53L1 HOD sensör imzası bulunamadı')
+        raise RuntimeError('Expected ST VL53L1 HOD sensor signature not found')
     if buf[1] not in (1, 2, 3) or buf[4] not in (1, 2, 3, 4, 5, 6):
-        raise RuntimeError('Reporting/power state alanları beklenen aralıkta değil')
+        raise RuntimeError('Reporting/power state fields are out of expected range')
 
 
 def enable_sensor(fd: int) -> bytearray:
@@ -172,7 +172,7 @@ def _stop(*_):
 def run_daemon() -> None:
     path = locate_hidraw()
     if not path:
-        raise RuntimeError('Intel ISH 8087:0AC2 hidraw bulunamadı')
+        raise RuntimeError('Intel ISH 8087:0AC2 hidraw device not found')
 
     cfg = load_sensor_config()
     silence_floor = float(cfg.get('silence_timeout', 30.0))
@@ -243,7 +243,7 @@ def run_daemon() -> None:
                 continue
             except OSError as exc:
                 if exc.errno in (errno.ENODEV, errno.EIO):
-                    raise RuntimeError('Intel ISH aygıtı kayboldu') from exc
+                    raise RuntimeError('Intel ISH device disconnected') from exc
                 raise
 
             if not data or data[0] != REPORT_ID:
@@ -311,7 +311,7 @@ def disable_only() -> int:
 def inspect_reports(seconds: float = 15.0) -> int:
     path = locate_hidraw()
     if not path:
-        print('Intel ISH bulunamadı', file=sys.stderr)
+        print('Intel ISH device not found', file=sys.stderr)
         return 2
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
     original = None

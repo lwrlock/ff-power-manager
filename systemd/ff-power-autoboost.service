@@ -1,0 +1,15 @@
+[Unit]
+Description=FF Power Manager Auto Dynamic Boost & GameMode Engine
+After=multi-user.target ff-power-apply.service
+Wants=ff-power-apply.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m fpm.auto_boost
+Environment=PYTHONPATH=/usr/local/lib/ff-power-manager
+Restart=always
+RestartSec=5s
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

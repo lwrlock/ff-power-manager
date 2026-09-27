@@ -405,6 +405,30 @@ static void toggle_turbo(void) {
     }
 }
 
+static void toggle_conservation_mode(void) {
+    const char *node = "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode";
+    if (access(node, F_OK) != 0) {
+        set_action_message("✗ Lenovo conservation mode not supported on this machine");
+        return;
+    }
+    char cur[16] = "0";
+    read_sysfs_string(node, cur, sizeof(cur));
+    const char *new_val = (strcmp(cur, "1") == 0) ? "0" : "1";
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "/usr/local/bin/ffctl conservation %s >/dev/null 2>&1 || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo conservation_mode %s >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo conservation_mode %s >/dev/null 2>&1",
+             new_val, new_val, new_val);
+    system(cmd);
+
+    char after[16] = "0";
+    read_sysfs_string(node, after, sizeof(after));
+    if (strcmp(after, "1") == 0) {
+        set_action_message("✓ Lenovo Conservation Mode ENABLED (Stops charge at 80% to protect battery)");
+    } else {
+        set_action_message("✓ Lenovo Conservation Mode DISABLED (Full charge to 100% enabled)");
+    }
+}
+
 static void render_progress_bar(char *out, size_t out_size, int percent, int width) {
     if (width < 6) width = 6;
     if (percent < 0) percent = 0;
@@ -624,6 +648,13 @@ static void draw_tab_battery(int width) {
                    health_pct > 80.0 ? C_GREEN : C_YELLOW,
                    health_pct, ESC_RESET, energy_design, (long)cycles);
 
+    char cm[16] = "0";
+    read_sysfs_string("/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode", cm, sizeof(cm));
+    print_box_line(width, "Lenovo Care   : %sConservation Mode %s (80%% Battery Limit) [Press K]%s",
+                   strcmp(cm, "1") == 0 ? C_GREEN ESC_BOLD : C_YELLOW,
+                   strcmp(cm, "1") == 0 ? "ENABLED" : "DISABLED",
+                   ESC_RESET);
+
     print_horizontal_border(width, "├", "─", "┤");
     print_box_line(width, "%sBATTERY OPTIMIZATION PROFILES (Press key to apply)%s", C_CYAN ESC_BOLD, ESC_RESET);
     print_box_line(width, "%s[A]%s %sRecommended Battery%s  : EPP balance_power, PCIe ASPM powersupersave, OLED 60Hz",
@@ -697,10 +728,12 @@ static void draw_dashboard(void) {
     }
 
     print_horizontal_border(width, "├", "─", "┤");
-    print_box_line(width, "%sCONTROLS:%s  %s[1/2/3/Tab]%s Tabs   %s[P]%s Toggle ToF   %s[T]%s Turbo   %s[A/B/C]%s Profile   %s[Q]%s Quit",
+    print_box_line(width, "%sCONTROLS:%s  %s[1/2/3/Tab]%s Tabs   %s[P]%s ToF   %s[K]%s %s80%% Conservation%s   %s[T]%s Turbo   %s[A/B/C]%s Profile   %s[Q]%s Quit",
                    C_CYAN, ESC_RESET,
                    C_YELLOW ESC_BOLD, ESC_RESET,
                    C_YELLOW ESC_BOLD, ESC_RESET,
+                   C_YELLOW ESC_BOLD, ESC_RESET,
+                   C_BOLD, ESC_RESET,
                    C_YELLOW ESC_BOLD, ESC_RESET,
                    C_YELLOW ESC_BOLD, ESC_RESET,
                    C_YELLOW ESC_BOLD, ESC_RESET);
@@ -763,6 +796,8 @@ int main(void) {
                     printf(ESC_CLEAR);
                 } else if (c == 'p' || c == 'P' || c == 's' || c == 'S') {
                     toggle_presence_sensor();
+                } else if (c == 'k' || c == 'K') {
+                    toggle_conservation_mode();
                 } else if (c == 't' || c == 'T') {
                     toggle_turbo();
                 } else if (c == 'a' || c == 'A') {

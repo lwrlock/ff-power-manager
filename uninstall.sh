@@ -7,18 +7,19 @@ systemctl --user disable --now ff-presence-session.service >/dev/null 2>&1 || tr
 # Disable system services
 sudo systemctl disable --now ff-presence-sensor.service >/dev/null 2>&1 || true
 sudo systemctl disable --now ff-power-apply.service >/dev/null 2>&1 || true
+sudo systemctl disable --now ff-power-autoboost.service >/dev/null 2>&1 || true
 
 # Remove binaries and services
 sudo rm -f \
   /etc/systemd/system/ff-power-apply.service \
   /etc/systemd/system/ff-presence-sensor.service \
+  /etc/systemd/system/ff-power-autoboost.service \
   /usr/local/lib/systemd/user/ff-presence-session.service \
   /etc/udev/rules.d/90-ff-power-manager.rules \
   /usr/share/polkit-1/actions/com.ff.powermanager.policy \
   /etc/polkit-1/rules.d/50-ff-power-manager.rules \
   /etc/sudoers.d/50-ff-power-manager \
   /usr/local/bin/ff-power-manager \
-
   /usr/local/bin/ffctl \
   /usr/local/bin/ff-tui \
   /usr/local/bin/ff-presence-sensor \
@@ -29,7 +30,9 @@ sudo rm -f \
 
 sudo rm -rf \
   /usr/local/lib/ff-power-manager \
-  /run/ff-power-manager
+  /run/ff-power-manager \
+  /usr/share/gnome-shell/extensions/ff-power-indicator@furkan.github.io \
+  "$HOME/.local/share/gnome-shell/extensions/ff-power-indicator@furkan.github.io"
 
 if [[ "${1:-}" == "--purge-config" ]]; then
   sudo rm -rf /etc/ff-power-manager
@@ -40,4 +43,4 @@ sudo systemctl daemon-reload
 systemctl --user daemon-reload 2>/dev/null || true
 sudo udevadm control --reload-rules
 
-echo 'FF Power Manager sistemden kaldırıldı.'
+echo 'FF Power Manager has been completely removed from the system.'

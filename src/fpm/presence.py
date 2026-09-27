@@ -21,6 +21,8 @@ DEFAULT = {
     'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
+    'oled_screen_care': True,
+    'oled_dim_inactive_sec': 45,
 }
 
 
@@ -43,6 +45,10 @@ def load_config() -> dict:
         out['away_delay'] = max(0, min(300, int(out['away_delay'])))
     except Exception:
         out['away_delay'] = 10
+    try:
+        out['oled_dim_inactive_sec'] = max(15, min(300, int(out.get('oled_dim_inactive_sec', 45))))
+    except Exception:
+        out['oled_dim_inactive_sec'] = 45
     return out
 
 
@@ -53,6 +59,7 @@ class PresenceController:
         self.timer = 0
         self.last_state = None
         self.screen_off_by_fpm = False
+        self.is_dimmed = False
         RUN_DIR.mkdir(parents=True, exist_ok=True)
         self.dir_file = Gio.File.new_for_path(str(RUN_DIR))
         self.monitor = self.dir_file.monitor_directory(Gio.FileMonitorFlags.NONE, None)
@@ -76,7 +83,30 @@ class PresenceController:
 
     def _periodic_power_check(self) -> bool:
         self._read_power_mode_once()
+        if self.cfg.get('oled_screen_care', True):
+            idletime_ms = self._get_idletime_ms()
+            dim_ms = int(self.cfg.get('oled_dim_inactive_sec', 45) * 1000)
+            disp_mode = self._get_display_power_save()
+            if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
+                self._set_dimming(True)
+                self.is_dimmed = True
+            elif self.is_dimmed and idletime_ms < 2500:
+                self._set_dimming(False)
+                self.is_dimmed = False
         return GLib.SOURCE_CONTINUE
+
+    def _set_dimming(self, dim: bool) -> None:
+        try:
+            self.session.call_sync(
+                'org.gnome.Shell.Brightness',
+                '/org/gnome/Shell/Brightness',
+                'org.gnome.Shell.Brightness',
+                'SetDimming',
+                GLib.Variant('(b)', (dim,)),
+                None, Gio.DBusCallFlags.NONE, 1000, None,
+            )
+        except Exception:
+            pass
 
     def _get_display_power_save(self) -> int:
         try:
@@ -106,6 +136,9 @@ class PresenceController:
             return 999999999
 
     def _set_display(self, on: bool) -> None:
+        if on and self.is_dimmed:
+            self._set_dimming(False)
+            self.is_dimmed = False
         self.session.call_sync(
             'org.gnome.Mutter.DisplayConfig',
             '/org/gnome/Mutter/DisplayConfig',

@@ -186,8 +186,8 @@ def save_config(cfg: dict) -> None:
             cmd = ['pkexec', str(helper), 'save-config', json.dumps(valid)]
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode != 0:
-                err = res.stderr.strip() or 'Yetkilendirme hatası'
-                raise PermissionError(f'Kaydedilemedi: {err}')
+                err = res.stderr.strip() or 'Authorization error'
+                raise PermissionError(f'Failed to save configuration: {err}')
         else:
             raise
 
@@ -199,15 +199,15 @@ def save_and_apply_config(cfg: dict) -> None:
         cmd = ['pkexec', str(helper), 'save-and-apply', json.dumps(valid)]
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            err = res.stderr.strip() or 'Yetkilendirme veya uygulama hatası'
-            raise PermissionError(f'Uygulanamadı: {err}')
+            err = res.stderr.strip() or 'Authorization or execution error'
+            raise PermissionError(f'Failed to apply configuration: {err}')
     else:
         save_config(valid)
         try:
             from .power_apply import apply_current
             apply_current()
         except Exception as exc:
-            raise RuntimeError(f'Profil uygulanamadı: {exc}')
+            raise RuntimeError(f'Failed to apply profile: {exc}')
 
 
 def save_sensor_config(cfg: dict) -> None:
@@ -228,8 +228,8 @@ def save_sensor_config(cfg: dict) -> None:
             cmd = ['pkexec', str(helper), 'save-sensor', json.dumps(payload)]
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode != 0:
-                err = res.stderr.strip() or 'Yetkilendirme hatası'
-                raise PermissionError(f'Sensor ayarları kaydedilemedi: {err}')
+                err = res.stderr.strip() or 'Authorization error'
+                raise PermissionError(f'Failed to save sensor settings: {err}')
         else:
             raise
 
@@ -513,9 +513,9 @@ def current_refresh_rate() -> str:
     if rate_file.exists():
         raw = read_text(rate_file) or ''
         if '60' in raw:
-            return '60 Hz (Pil Tasarrufu)'
+            return '60 Hz (Power Saver)'
         elif '120' in raw:
-            return '120 Hz + VRR (Akıcı)'
+            return '120 Hz + VRR (Smooth)'
         return raw
     m_xml = pathlib.Path.home() / '.config/monitors.xml'
     if m_xml.exists():
@@ -546,19 +546,19 @@ def gpu_min_freq_current() -> str:
     for node in ['/sys/class/drm/card1/gt_min_freq_mhz', '/sys/class/drm/card0/gt_min_freq_mhz']:
         txt = read_text(node)
         if txt and txt.strip():
-            return f"{txt.strip()} MHz (Kasma Önleyici)"
-    return 'Dinamik'
+            return f"{txt.strip()} MHz (Stutter Prevention)"
+    return 'Dynamic'
 
 
 def vaapi_current() -> str:
     drv = os.environ.get('LIBVA_DRIVER_NAME')
     if not drv:
         if os.path.exists('/etc/profile.d/vaapi-intel.sh'):
-            drv = 'Intel iHD (Iris Xe Donanımsal)'
+            drv = 'Intel iHD (Iris Xe Hardware)'
         else:
-            drv = 'Intel iHD (Donanımsal)'
+            drv = 'Intel iHD (Hardware)'
     else:
-        drv = f"{drv} (Donanımsal)"
+        drv = f"{drv} (Hardware)"
     return drv
 
 
@@ -567,7 +567,7 @@ def tcp_cc_current() -> str:
     if cc:
         val = cc.strip().upper()
         if val == 'BBR':
-            return 'BBR (Google Düşük Gecikme)'
+            return 'BBR (Google Low Latency)'
         return val
     return 'Cubic'
 
@@ -575,15 +575,108 @@ def tcp_cc_current() -> str:
 def zram_current() -> str:
     alg_file = '/sys/block/zram0/comp_algorithm'
     alg_txt = read_text(alg_file)
-    alg = 'Aktif'
+    alg = 'Active'
     if alg_txt:
         import re
         m = re.search(r'\[(.*?)\]', alg_txt)
         if m:
             alg = m.group(1)
     if os.path.exists('/dev/zram0'):
-        return f"ZRAM ({alg}) Aktif"
-    return 'Devre Dışı'
+        return f"ZRAM ({alg}) Active"
+    return 'Disabled'
+
+
+LENOVO_VPC_PATH = pathlib.Path('/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00')
+PLATFORM_PROFILE_PATH = pathlib.Path('/sys/firmware/acpi/platform_profile')
+
+
+def battery_health_report() -> dict:
+    bat_dir = None
+    for p in sorted(glob.glob('/sys/class/power_supply/BAT*')):
+        bat_dir = pathlib.Path(p)
+        break
+    if not bat_dir or not bat_dir.exists():
+        return {}
+
+    def _read_int(name: str) -> int | None:
+        try:
+            return int((bat_dir / name).read_text().strip())
+        except Exception:
+            return None
+
+    def _read_str(name: str) -> str:
+        try:
+            return (bat_dir / name).read_text().strip()
+        except Exception:
+            return '—'
+
+    full_uwh = _read_int('energy_full') or _read_int('charge_full')
+    design_uwh = _read_int('energy_full_design') or _read_int('charge_full_design')
+    now_uwh = _read_int('energy_now') or _read_int('charge_now')
+    cycles = _read_int('cycle_count') or 0
+    vol_uv = _read_int('voltage_now') or 0
+    vol_min_uv = _read_int('voltage_min_design') or 0
+    watts = power_now_watts()
+
+    full_wh = (full_uwh / 1e6) if full_uwh else 0.0
+    design_wh = (design_uwh / 1e6) if design_uwh else 0.0
+    now_wh = (now_uwh / 1e6) if now_uwh else 0.0
+    health_pct = (full_wh / design_wh * 100.0) if design_wh > 0 else 100.0
+
+    return {
+        'manufacturer': _read_str('manufacturer'),
+        'model_name': _read_str('model_name'),
+        'technology': _read_str('technology'),
+        'charge_types': _read_str('charge_types'),
+        'capacity_pct': _read_int('capacity'),
+        'energy_now_wh': round(now_wh, 2),
+        'energy_full_wh': round(full_wh, 2),
+        'energy_design_wh': round(design_wh, 2),
+        'health_pct': round(min(115.0, health_pct), 1),
+        'cycle_count': cycles,
+        'voltage_v': round(vol_uv / 1e6, 2) if vol_uv else 0.0,
+        'voltage_design_v': round(vol_min_uv / 1e6, 2) if vol_min_uv else 0.0,
+        'watts': round(watts, 2) if watts else 0.0,
+    }
+
+
+def get_lenovo_features() -> dict:
+    res = {
+        'supported': LENOVO_VPC_PATH.exists(),
+        'conservation_mode': None,
+        'fn_lock': None,
+        'usb_charging': None,
+        'platform_profile': None,
+    }
+    if LENOVO_VPC_PATH.exists():
+        cm = read_text(LENOVO_VPC_PATH / 'conservation_mode')
+        res['conservation_mode'] = (cm == '1') if cm else False
+        fl = read_text(LENOVO_VPC_PATH / 'fn_lock')
+        res['fn_lock'] = (fl == '1') if fl else False
+        uc = read_text(LENOVO_VPC_PATH / 'usb_charging')
+        res['usb_charging'] = (uc == '1') if uc else False
+    if PLATFORM_PROFILE_PATH.exists():
+        res['platform_profile'] = read_text(PLATFORM_PROFILE_PATH)
+    return res
+
+
+def set_lenovo_feature(name: str, value: bool | str | int) -> bool:
+    if name == 'conservation_mode':
+        node = LENOVO_VPC_PATH / 'conservation_mode'
+        val = '1' if value in (True, 1, '1', 'on') else '0'
+        return write_if_changed(node, val)
+    elif name == 'fn_lock':
+        node = LENOVO_VPC_PATH / 'fn_lock'
+        val = '1' if value in (True, 1, '1', 'on') else '0'
+        return write_if_changed(node, val)
+    elif name == 'usb_charging':
+        node = LENOVO_VPC_PATH / 'usb_charging'
+        val = '1' if value in (True, 1, '1', 'on') else '0'
+        return write_if_changed(node, val)
+    elif name == 'platform_profile':
+        if PLATFORM_PROFILE_PATH.exists() and str(value) in ('low-power', 'balanced', 'performance'):
+            return write_if_changed(PLATFORM_PROFILE_PATH, str(value))
+    return False
 
 
 def status_snapshot() -> dict:
@@ -611,7 +704,10 @@ def status_snapshot() -> dict:
         'net_opt': tcp_cc_current(),
         'zram': zram_current(),
         'presence_state': read_text(STATE_FILE),
+        'lenovo': get_lenovo_features(),
+        'battery_health': battery_health_report(),
         'config': load_config(),
         'sensor': load_sensor_config(),
     }
+
 

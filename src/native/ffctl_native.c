@@ -217,6 +217,150 @@ static void run_sensor_live(void) {
     }
 }
 
+static bool write_sysfs_string(const char *path, const char *val) {
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return false;
+    ssize_t n = write(fd, val, strlen(val));
+    close(fd);
+    return n == (ssize_t)strlen(val);
+}
+
+#define LENOVO_VPC_DIR "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00"
+#define PLATFORM_PROFILE_NODE "/sys/firmware/acpi/platform_profile"
+
+static void print_battery_health(void) {
+    init_battery_path();
+    char path[512];
+    char mfg[64] = "—", model[64] = "—", tech[64] = "—", charge_types[128] = "—";
+
+    snprintf(path, sizeof(path), "%s/manufacturer", g_bat_path);
+    read_sysfs_string(path, mfg, sizeof(mfg));
+    snprintf(path, sizeof(path), "%s/model_name", g_bat_path);
+    read_sysfs_string(path, model, sizeof(model));
+    snprintf(path, sizeof(path), "%s/technology", g_bat_path);
+    read_sysfs_string(path, tech, sizeof(tech));
+    snprintf(path, sizeof(path), "%s/charge_types", g_bat_path);
+    read_sysfs_string(path, charge_types, sizeof(charge_types));
+
+    snprintf(path, sizeof(path), "%s/energy_full_design", g_bat_path);
+    int64_t design_uwh = asm_fast_read_sysfs_int(path);
+    if (design_uwh <= 0) {
+        snprintf(path, sizeof(path), "%s/charge_full_design", g_bat_path);
+        design_uwh = asm_fast_read_sysfs_int(path);
+    }
+
+    snprintf(path, sizeof(path), "%s/energy_full", g_bat_path);
+    int64_t full_uwh = asm_fast_read_sysfs_int(path);
+    if (full_uwh <= 0) {
+        snprintf(path, sizeof(path), "%s/charge_full", g_bat_path);
+        full_uwh = asm_fast_read_sysfs_int(path);
+    }
+
+    snprintf(path, sizeof(path), "%s/energy_now", g_bat_path);
+    int64_t now_uwh = asm_fast_read_sysfs_int(path);
+    if (now_uwh <= 0) {
+        snprintf(path, sizeof(path), "%s/charge_now", g_bat_path);
+        now_uwh = asm_fast_read_sysfs_int(path);
+    }
+
+    snprintf(path, sizeof(path), "%s/capacity", g_bat_path);
+    int64_t cap = asm_fast_read_sysfs_int(path);
+
+    snprintf(path, sizeof(path), "%s/cycle_count", g_bat_path);
+    int64_t cycles = asm_fast_read_sysfs_int(path);
+
+    snprintf(path, sizeof(path), "%s/voltage_now", g_bat_path);
+    int64_t vol_uv = asm_fast_read_sysfs_int(path);
+
+    snprintf(path, sizeof(path), "%s/voltage_min_design", g_bat_path);
+    int64_t vol_min_uv = asm_fast_read_sysfs_int(path);
+
+    double full_wh = (full_uwh > 0) ? (full_uwh / 1e6) : 0.0;
+    double design_wh = (design_uwh > 0) ? (design_uwh / 1e6) : 0.0;
+    double now_wh = (now_uwh > 0) ? (now_uwh / 1e6) : 0.0;
+    double health_pct = (design_wh > 0.0) ? (full_wh / design_wh * 100.0) : 100.0;
+    double watts = get_battery_watts();
+
+    printf(COLOR_BOLD "=== Battery Health & Degradation Analytics ===\n" COLOR_RESET);
+    printf("  Manufacturer        : %s\n", mfg);
+    printf("  Model / Chemistry   : %s (%s)\n", model, tech);
+    printf("  Design Capacity     : %.2f Wh\n", design_wh);
+    printf("  Full Charge Capacity: %.2f Wh\n", full_wh);
+    printf("  Current Charge Level: %.2f Wh (%ld%%)\n", now_wh, (long)cap);
+    printf("  Battery Health Score: %s%.1f%%%s %s\n",
+           health_pct >= 90.0 ? COLOR_GREEN : (health_pct >= 80.0 ? COLOR_YELLOW : COLOR_RED),
+           health_pct, COLOR_RESET,
+           health_pct >= 100.0 ? "(Optimal / Grade-A Factory Cell)" : "");
+    printf("  Cycle Count         : %ld cycles\n", (long)cycles);
+    printf("  Voltage             : %.2f V (Design Min: %.2f V)\n",
+           vol_uv > 0 ? (vol_uv / 1e6) : 0.0,
+           vol_min_uv > 0 ? (vol_min_uv / 1e6) : 0.0);
+    if (watts > 0.0) {
+        printf("  Active Power Draw   : %.2f W\n", watts);
+    }
+    printf("  Charge Profile Types: %s\n", charge_types);
+    printf("--------------------------------------------------\n");
+}
+
+static void print_lenovo_status(void) {
+    if (access(LENOVO_VPC_DIR, F_OK) != 0) {
+        printf("Lenovo IdeaPad ACPI hardware interface (VPC2004) not detected on this machine.\n");
+        return;
+    }
+    char cm[16] = "0", fl[16] = "0", uc[16] = "0", prof[64] = "—";
+    read_sysfs_string(LENOVO_VPC_DIR "/conservation_mode", cm, sizeof(cm));
+    read_sysfs_string(LENOVO_VPC_DIR "/fn_lock", fl, sizeof(fl));
+    read_sysfs_string(LENOVO_VPC_DIR "/usb_charging", uc, sizeof(uc));
+    read_sysfs_string(PLATFORM_PROFILE_NODE, prof, sizeof(prof));
+
+    printf(COLOR_BOLD "=== Lenovo IdeaPad Hardware Integration (VPC2004) ===\n" COLOR_RESET);
+    printf("  Conservation Mode (80%% Limit) : %s\n",
+           strcmp(cm, "1") == 0 ? COLOR_GREEN "ENABLED (Preserving Battery Health at 80%)" COLOR_RESET : COLOR_YELLOW "DISABLED (Charging to 100%)" COLOR_RESET);
+    printf("  Fn-Lock (Primary Function)    : %s\n",
+           strcmp(fl, "1") == 0 ? COLOR_GREEN "ENABLED (F1-F12 Special/Media Keys Active)" COLOR_RESET : COLOR_YELLOW "DISABLED (Standard F1-F12 Keys Active)" COLOR_RESET);
+    printf("  Always-On USB Charging        : %s\n",
+           strcmp(uc, "1") == 0 ? COLOR_GREEN "ENABLED (Charges external devices when laptop off)" COLOR_RESET : COLOR_YELLOW "DISABLED" COLOR_RESET);
+    printf("  Firmware Platform Profile     : %s\n", prof);
+    printf("--------------------------------------------------\n");
+    printf("Quick Commands:\n");
+    printf("  ffctl conservation on|off     Toggle 80%% battery conservation mode\n");
+    printf("  ffctl fnlock on|off           Toggle Fn-lock keyboard mode\n");
+    printf("  ffctl usbcharge on|off        Toggle Always-On USB charging\n");
+}
+
+static int set_lenovo_feature(const char *feature, const char *val) {
+    int v = (strcmp(val, "1") == 0 || strcasecmp(val, "on") == 0 || strcasecmp(val, "true") == 0 || strcasecmp(val, "enable") == 0) ? 1 : 0;
+    char path[256];
+    snprintf(path, sizeof(path), "%s/%s", LENOVO_VPC_DIR, feature);
+
+    if (access(path, F_OK) != 0) {
+        fprintf(stderr, COLOR_RED "Error: Lenovo node %s not found.\n" COLOR_RESET, path);
+        return 1;
+    }
+
+    char str_val[4];
+    snprintf(str_val, sizeof(str_val), "%d", v);
+
+    if (geteuid() == 0) {
+        if (write_sysfs_string(path, str_val)) {
+            printf(COLOR_GREEN "✓ Lenovo %s set to %s successfully.\n" COLOR_RESET, feature, v ? "ON" : "OFF");
+            return 0;
+        }
+    }
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo %s %d 2>/dev/null || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo %s %d",
+             feature, v, feature, v);
+    int rc = system(cmd);
+    if (rc == 0) {
+        printf(COLOR_GREEN "✓ Lenovo %s set to %s successfully.\n" COLOR_RESET, feature, v ? "ON" : "OFF");
+        return 0;
+    } else {
+        fprintf(stderr, COLOR_RED "Failed to set Lenovo %s.\n" COLOR_RESET, feature);
+        return 1;
+    }
+}
+
 static void print_status(void) {
     init_battery_path();
     bool bat = is_on_battery();
@@ -227,13 +371,15 @@ static void print_status(void) {
 
     char refresh[128] = "—";
     read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
+    if (strcmp(refresh, "2880x1800@60.000") == 0) strcpy(refresh, "60 Hz (Power Saver)");
+    else if (strcmp(refresh, "2880x1800@120.000+vrr") == 0) strcpy(refresh, "120 Hz + VRR (Smooth)");
 
     char presence[64] = "disabled";
     read_sysfs_string(STATE_FILE, presence, sizeof(presence));
 
     /* Turbo status */
     int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
-    const char *turbo_str = (no_turbo == 0) ? COLOR_GREEN "Açık (Enabled)" COLOR_RESET : (no_turbo == 1 ? COLOR_YELLOW "Kapalı (Disabled)" COLOR_RESET : "—");
+    const char *turbo_str = (no_turbo == 0) ? COLOR_GREEN "Enabled" COLOR_RESET : (no_turbo == 1 ? COLOR_YELLOW "Disabled" COLOR_RESET : "—");
 
     /* CPU EPP */
     char epp[64] = "—";
@@ -246,34 +392,34 @@ static void print_status(void) {
     get_active_aspm_policy(aspm, sizeof(aspm));
 
     /* Translate presence for terminal */
-    const char *pres_tr = "Devre Dışı";
-    if (strcmp(presence, "present") == 0) pres_tr = COLOR_GREEN "Kullanıcı Masada (Algılandı - Mesafe < 1.2m)" COLOR_RESET;
-    else if (strcmp(presence, "absent") == 0) pres_tr = COLOR_YELLOW "Kullanıcı Uzakta (Beklemede)" COLOR_RESET;
-    else if (strcmp(presence, "unknown") == 0) pres_tr = COLOR_CYAN "Algılanıyor..." COLOR_RESET;
-    else if (strcmp(presence, "error") == 0) pres_tr = COLOR_RED "Sensör Hatası" COLOR_RESET;
+    const char *pres_txt = "Disabled";
+    if (strcmp(presence, "present") == 0) pres_txt = COLOR_GREEN "User Present (At Desk - Distance < 1.2m)" COLOR_RESET;
+    else if (strcmp(presence, "absent") == 0) pres_txt = COLOR_YELLOW "User Away (Standby Mode)" COLOR_RESET;
+    else if (strcmp(presence, "unknown") == 0) pres_txt = COLOR_CYAN "Detecting..." COLOR_RESET;
+    else if (strcmp(presence, "error") == 0) pres_txt = COLOR_RED "Sensor Error" COLOR_RESET;
 
     SensorTelemetry tel;
     bool has_tel = read_sensor_telemetry(&tel);
 
     printf(COLOR_BOLD "=== FF Power Manager Status (Native Engine) ===\n" COLOR_RESET);
-    printf("  Güç Kaynağı           : %s%s%s\n",
+    printf("  Power Source          : %s%s%s\n",
            bat ? COLOR_YELLOW : COLOR_GREEN,
-           bat ? "Batarya (Battery)" : "Adaptör (AC)",
+           bat ? "Battery (Discharging)" : "AC Power (Mains)",
            COLOR_RESET);
 
     if (cap >= 0) {
-        printf("  Batarya Doluluğu      : %%%ld\n", (long)cap);
+        printf("  Battery Level         : %ld%%\n", (long)cap);
     }
     if (watts > 0.0) {
-        printf("  Anlık Tüketim         : %.2f W\n", watts);
+        printf("  Active Draw           : %.2f W\n", watts);
     }
-    printf("  Ekran Yenileme Hızı   : %s\n", refresh);
-    printf("  CPU EPP Ölçeği        : %s\n", epp);
+    printf("  Display Refresh Rate  : %s\n", refresh);
+    printf("  CPU EPP Policy        : %s\n", epp);
     printf("  Intel Turbo Boost     : %s\n", turbo_str);
-    printf("  PCIe ASPM Modu        : %s\n", aspm);
-    printf("  Presence Sensör (ToF) : %s\n", pres_tr);
+    printf("  PCIe ASPM Policy      : %s\n", aspm);
+    printf("  Presence Sensor (ToF) : %s\n", pres_txt);
     if (has_tel) {
-        printf("  ToF Canlı Telemetri   : %d cm mesafe | %llu paket alındı (%.1fs önce)\n",
+        printf("  ToF Live Telemetry    : %d cm distance | %llu packets (%.1fs ago)\n",
                tel.distance_cm, (unsigned long long)tel.packet_count, tel.last_packet_sec_ago);
     }
     printf("--------------------------------------------------\n");
@@ -352,6 +498,49 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    if (strcmp(argv[1], "health") == 0 || strcmp(argv[1], "--health") == 0) {
+        print_battery_health();
+        return 0;
+    }
+
+    if (strcmp(argv[1], "lenovo") == 0) {
+        if (argc > 3) {
+            if (strcmp(argv[2], "conservation") == 0) {
+                return set_lenovo_feature("conservation_mode", argv[3]);
+            } else if (strcmp(argv[2], "fnlock") == 0) {
+                return set_lenovo_feature("fn_lock", argv[3]);
+            } else if (strcmp(argv[2], "usbcharge") == 0) {
+                return set_lenovo_feature("usb_charging", argv[3]);
+            }
+        }
+        print_lenovo_status();
+        return 0;
+    }
+
+    if (strcmp(argv[1], "conservation") == 0) {
+        if (argc > 2) {
+            return set_lenovo_feature("conservation_mode", argv[2]);
+        }
+        print_lenovo_status();
+        return 0;
+    }
+
+    if (strcmp(argv[1], "fnlock") == 0) {
+        if (argc > 2) {
+            return set_lenovo_feature("fn_lock", argv[2]);
+        }
+        print_lenovo_status();
+        return 0;
+    }
+
+    if (strcmp(argv[1], "usbcharge") == 0) {
+        if (argc > 2) {
+            return set_lenovo_feature("usb_charging", argv[2]);
+        }
+        print_lenovo_status();
+        return 0;
+    }
+
     if (strcmp(argv[1], "sensor") == 0) {
         if (argc > 2 && (strcmp(argv[2], "live") == 0 || strcmp(argv[2], "-l") == 0)) {
             run_sensor_live();
@@ -382,7 +571,12 @@ int main(int argc, char *argv[]) {
         printf("Usage: ffctl [COMMAND]\n\n"
                "Commands:\n"
                "  status             Display live hardware power and ToF presence status\n"
-               "  apply [profile]    Apply power profile (battery|ac|power_saver|performance)\n"
+               "  apply [profile]    Apply power profile (battery|ac|extreme_performance|cool_quiet|max_battery)\n"
+               "  health             Display battery health, degradation, capacity and cycle analytics\n"
+               "  lenovo             Display Lenovo IdeaPad hardware integration status\n"
+               "  conservation <on|off> Toggle 80%% battery conservation mode\n"
+               "  fnlock <on|off>    Toggle Fn-lock primary keyboard function\n"
+               "  usbcharge <on|off> Toggle Always-On USB charging\n"
                "  sensor status      Display ToF sensor telemetry, distance and packets\n"
                "  sensor live        Continuous real-time ToF distance and packet stream\n"
                "  tui                Launch interactive btop-style dashboard\n"
@@ -392,7 +586,9 @@ int main(int argc, char *argv[]) {
     }
 
     /* Fallback to apply if command matches a profile */
-    if (strcmp(argv[1], "battery") == 0 || strcmp(argv[1], "ac") == 0) {
+    if (strcmp(argv[1], "battery") == 0 || strcmp(argv[1], "ac") == 0 ||
+        strcmp(argv[1], "extreme_performance") == 0 || strcmp(argv[1], "cool_quiet") == 0 ||
+        strcmp(argv[1], "max_battery") == 0 || strcmp(argv[1], "responsive_battery") == 0) {
         return run_apply(argv[1]);
     }
 

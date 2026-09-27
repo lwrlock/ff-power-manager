@@ -9,7 +9,8 @@
 
   <action id="com.ff.powermanager.save-and-apply">
     <description>Save and apply FF Power Manager configuration</description>
-    <message>FF Power Manager ayarlarını kaydetmek ve uygulamak için yetkilendirme gerekiyor.</message>
+    <message>Authentication is required to apply hardware power management settings.</message>
+    <message xml:lang="tr">FF Power Manager donanım güç yönetim ayarlarını uygulamak için yetkilendirme gerekiyor.</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

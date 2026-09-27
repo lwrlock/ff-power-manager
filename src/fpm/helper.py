@@ -156,6 +156,24 @@ def main(argv: list[str] | None = None) -> int:
         set_epp(val)
         sys.stdout.write(f"EPP set: {val}\n")
         return 0
+    elif action == "set-lenovo":
+        from .core import set_lenovo_feature
+        feat = args[1] if len(args) > 1 else "conservation_mode"
+        val = args[2] if len(args) > 2 else "1"
+        success = set_lenovo_feature(feat, val)
+        sys.stdout.write(f"Lenovo {feat} set to {val}: {'success' if success else 'failed'}\n")
+        return 0 if success else 1
+    elif action == "autoboost-service":
+        subaction = args[1] if len(args) > 1 else "status"
+        if subaction == "enable-now":
+            return subprocess.run(['/usr/bin/systemctl', 'enable', '--now', 'ff-power-autoboost.service']).returncode
+        elif subaction == "disable-now":
+            return subprocess.run(['/usr/bin/systemctl', 'disable', '--now', 'ff-power-autoboost.service']).returncode
+        elif subaction == "restart":
+            return subprocess.run(['/usr/bin/systemctl', 'restart', 'ff-power-autoboost.service']).returncode
+        elif subaction == "stop":
+            return subprocess.run(['/usr/bin/systemctl', 'stop', 'ff-power-autoboost.service']).returncode
+        return 0
     else:
         sys.stderr.write(f"Unknown action: {action}\n")
         return 2

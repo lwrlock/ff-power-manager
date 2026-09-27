@@ -43,11 +43,11 @@ class ConfigTests(unittest.TestCase):
     def test_current_refresh_rate_formatting(self, mock_read):
         mock_read.return_value = '2880x1800@60.000'
         with mock.patch.object(core.pathlib.Path, 'exists', return_value=True):
-            self.assertEqual(core.current_refresh_rate(), '60 Hz (Pil Tasarrufu)')
+            self.assertEqual(core.current_refresh_rate(), '60 Hz (Power Saver)')
 
         mock_read.return_value = '2880x1800@120.000+vrr'
         with mock.patch.object(core.pathlib.Path, 'exists', return_value=True):
-            self.assertEqual(core.current_refresh_rate(), '120 Hz + VRR (Akıcı)')
+            self.assertEqual(core.current_refresh_rate(), '120 Hz + VRR (Smooth)')
 
     @mock.patch('fpm.core.subprocess.run')
     @mock.patch('fpm.core.pathlib.Path.exists', return_value=True)
@@ -102,17 +102,29 @@ class ConfigTests(unittest.TestCase):
 
         # TCP CC parser
         mock_read.return_value = 'bbr\n'
-        self.assertEqual(core.tcp_cc_current(), 'BBR (Google Düşük Gecikme)')
+        self.assertEqual(core.tcp_cc_current(), 'BBR (Google Low Latency)')
 
         # ZRAM parser
         mock_read.return_value = '[zstd] lzo-rle lzo lz4'
         with mock.patch('os.path.exists', return_value=True):
-            self.assertEqual(core.zram_current(), 'ZRAM (zstd) Aktif')
+            self.assertEqual(core.zram_current(), 'ZRAM (zstd) Active')
 
     @mock.patch('fpm.core.read_text')
     def test_gpu_min_freq_helper(self, mock_read):
         mock_read.return_value = '800\n'
-        self.assertEqual(core.gpu_min_freq_current(), '800 MHz (Kasma Önleyici)')
+        self.assertEqual(core.gpu_min_freq_current(), '800 MHz (Stutter Prevention)')
+
+    def test_lenovo_and_battery_health_structures(self):
+        lenovo = core.get_lenovo_features()
+        self.assertIsInstance(lenovo, dict)
+        self.assertIn('supported', lenovo)
+        self.assertIn('conservation_mode', lenovo)
+
+        health = core.battery_health_report()
+        self.assertIsInstance(health, dict)
+        if health:
+            self.assertIn('health_pct', health)
+            self.assertIn('cycle_count', health)
 
 
 if __name__ == '__main__':
