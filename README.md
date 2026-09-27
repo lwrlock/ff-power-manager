@@ -91,6 +91,12 @@ This project was engineered, optimized, and modernized in deep collaboration wit
 
 ---
 
+## 👨‍💻 About the Developer
+
+Hi! I'm Furkan (**lwrlock**), a 17-year-old Computer Engineering student and Linux enthusiast. I built **FF Power Manager** to bridge the gap between cutting-edge laptop hardware (Intel Core Ultra, Intel Arc Pro, Samsung 2.8K OLED) and the Linux desktop experience — achieving true MacBook-like battery efficiency, instant responsiveness, and zero background CPU overhead on Fedora & GNOME.
+
+---
+
 ## 📄 License
 
 MIT License. Copyright (c) 2026 lwrlock. See [LICENSE](LICENSE) for details.

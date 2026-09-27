@@ -91,6 +91,12 @@ Bu proje; mimari tasarım, düşük seviyeli donanım optimizasyonları ve kulla
 
 ---
 
+## 👨‍💻 Geliştirici Hakkında
+
+Merhaba! Ben Furkan (**lwrlock**), 17 yaşında bir Bilgisayar Mühendisliği öğrencisiyim. **FF Power Manager** projesini, yeni nesil Intel Core Ultra, Intel Arc Pro ve Samsung 2.8K OLED donanımına sahip bir dizüstü bilgisayarda Linux (Fedora & GNOME) deneyimini en üst seviyeye çıkarmak; Apple Silicon / MacBook düzeyinde pil ömrü, sıfır video kasıntısı ve anında tepki süresi elde etmek amacıyla geliştirdim.
+
+---
+
 ## 📄 Lisans
 
 MIT Lisansı. Telif Hakkı (c) 2026 lwrlock. Ayrıntılar için [LICENSE](LICENSE) dosyasına bakabilirsiniz.

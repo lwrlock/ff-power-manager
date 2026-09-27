@@ -4,15 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FF Power Manager — Ultra-Low Latency Linux Power & ToF Presence Engine</title>
-  <meta name="description" content="Ultra-low-latency Linux power profile manager and Lenovo ToF human presence sensor automation engine built in C and x86_64 Assembly for Fedora / GNOME / Wayland.">
-  <meta name="keywords" content="ff-power-manager, ff power manager, linux power management, fedora, lenovo presence sensor, tof sensor, oled 60hz 120hz, battery life, intel core ultra, intel arc, btop tui, c assembly">
-  <meta name="author" content="lwrlock">
+  <meta name="description" content="MacBook-grade Linux power profile manager, zero-stutter Intel Arc GPU tuning, and Lenovo ToF presence radar engine built in C and x86_64 Assembly for Fedora & GNOME.">
+  <meta name="keywords" content="ff-power-manager, linux power management, fedora, lenovo presence sensor, tof sensor, oled 60hz 120hz, battery life, intel core ultra, intel arc, btop tui, c assembly, lwrlock">
+  <meta name="author" content="Furkan (lwrlock)">
   <link rel="canonical" href="https://lwrlock.github.io/ff-power-manager/">
 
   <!-- OpenGraph Metadata -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="FF Power Manager — C & x86_64 Assembly Linux Power Engine">
-  <meta property="og:description" content="0.0% CPU overhead, ~5W idle battery tuning, live ToF millimeter radar, and dynamic 60Hz/120Hz OLED switching for Fedora & GNOME.">
+  <meta property="og:title" content="FF Power Manager — MacBook-Grade Linux Power & ToF Presence Engine">
+  <meta property="og:description" content="0.0% CPU overhead, ~5W idle battery tuning, live ToF millimeter radar, zero-stutter Intel Arc GPU fix, and dynamic 60Hz/120Hz OLED switching.">
   <meta property="og:url" content="https://lwrlock.github.io/ff-power-manager/">
   <meta property="og:site_name" content="FF Power Manager">
 
@@ -24,99 +24,212 @@
     "name": "FF Power Manager",
     "operatingSystem": "Linux (Fedora, GNOME, Wayland)",
     "applicationCategory": "UtilitiesApplication",
-    "description": "Ultra-low-latency Linux power profile manager and Lenovo ToF presence sensor engine in C and x86_64 Assembly.",
+    "description": "MacBook-grade Linux power profile manager and Lenovo ToF presence sensor engine in C and x86_64 Assembly.",
     "license": "https://opensource.org/licenses/MIT",
     "url": "https://lwrlock.github.io/ff-power-manager/",
     "author": {
       "@type": "Person",
-      "name": "lwrlock"
+      "name": "Furkan",
+      "jobTitle": "Computer Engineering Student",
+      "url": "https://github.com/lwrlock"
     }
   }
   </script>
 
   <style>
     :root {
-      --bg: #0f141c;
-      --card-bg: #182232;
-      --card-border: #223247;
-      --text: #e2e8f0;
+      --bg: #0b0f17;
+      --card-bg: rgba(22, 30, 46, 0.75);
+      --card-border: rgba(56, 189, 248, 0.15);
+      --card-hover: rgba(56, 189, 248, 0.35);
+      --text: #f1f5f9;
       --text-muted: #94a3b8;
       --primary: #38bdf8;
-      --accent: #22c55e;
-      --warning: #f59e0b;
-      --code-bg: #090d14;
+      --primary-glow: rgba(56, 189, 248, 0.25);
+      --accent: #10b981;
+      --accent-glow: rgba(16, 185, 129, 0.2);
+      --purple: #a855f7;
+      --code-bg: #070a10;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, -apple-system, sans-serif;
       background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.08) 0%, transparent 45%),
+        radial-gradient(circle at 85% 75%, rgba(168, 85, 247, 0.08) 0%, transparent 45%);
       color: var(--text);
       line-height: 1.6;
       padding: 0 1.5rem;
     }
-    .container { max-width: 960px; margin: 0 auto; padding: 3rem 0; }
-    header { text-align: center; margin-bottom: 3.5rem; }
-    .badge-bar { display: flex; justify-content: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .container { max-width: 1040px; margin: 0 auto; padding: 3.5rem 0; }
+    header { text-align: center; margin-bottom: 4rem; }
+    .badge-bar { display: flex; justify-content: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1.75rem; }
     .badge {
-      display: inline-block;
-      padding: 0.25rem 0.75rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.85rem;
       border-radius: 9999px;
       font-size: 0.8rem;
       font-weight: 600;
-      background: #1e293b;
+      background: rgba(30, 41, 59, 0.8);
       color: var(--primary);
       border: 1px solid var(--card-border);
+      backdrop-filter: blur(8px);
       text-decoration: none;
     }
-    .badge.ai { color: #c084fc; border-color: #6b21a8; background: #2e1065; }
-    h1 { font-size: 2.75rem; font-weight: 800; color: #fff; margin-bottom: 1rem; letter-spacing: -0.025em; }
-    .subtitle { font-size: 1.25rem; color: var(--text-muted); max-width: 720px; margin: 0 auto 2rem; }
+    .badge.ai { color: #d8b4fe; border-color: rgba(168, 85, 247, 0.4); background: rgba(88, 28, 135, 0.35); }
+    .badge.green { color: #6ee7b7; border-color: rgba(16, 185, 129, 0.4); background: rgba(6, 78, 59, 0.35); }
+    h1 {
+      font-size: 3.25rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 1.25rem;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #ffffff 40%, #93c5fd 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      max-width: 780px;
+      margin: 0 auto 2.25rem;
+      font-weight: 400;
+    }
     .cta-group { display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; }
     .btn {
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
-      padding: 0.75rem 1.5rem;
-      border-radius: 8px;
+      padding: 0.85rem 1.75rem;
+      border-radius: 10px;
       font-weight: 600;
       text-decoration: none;
-      transition: all 0.2s ease;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .btn-primary { background: var(--primary); color: #000; }
-    .btn-primary:hover { background: #7dd3fc; }
-    .btn-outline { background: transparent; color: #fff; border: 1px solid var(--card-border); }
-    .btn-outline:hover { background: var(--card-bg); border-color: var(--primary); }
+    .btn-primary {
+      background: var(--primary);
+      color: #041019;
+      box-shadow: 0 4px 20px var(--primary-glow);
+    }
+    .btn-primary:hover {
+      background: #7dd3fc;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 25px var(--primary-glow);
+    }
+    .btn-outline {
+      background: rgba(30, 41, 59, 0.6);
+      color: #fff;
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(8px);
+    }
+    .btn-outline:hover {
+      background: var(--card-bg);
+      border-color: var(--primary);
+      transform: translateY(-2px);
+    }
     .terminal-box {
       background: var(--code-bg);
       border: 1px solid var(--card-border);
-      border-radius: 10px;
-      padding: 1.25rem 1.5rem;
+      border-radius: 12px;
+      padding: 1.25rem 1.75rem;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       color: #38bdf8;
       font-size: 0.95rem;
-      margin: 2rem auto;
-      max-width: 600px;
-      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      margin: 2.25rem auto 0;
+      max-width: 620px;
+      box-shadow: 0 12px 35px -8px rgba(0, 0, 0, 0.6);
+      text-align: left;
     }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 3rem; }
+    .terminal-box .comment { color: #64748b; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 2.5rem; }
     .card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 1.75rem;
-      transition: transform 0.2s ease, border-color 0.2s ease;
+      border-radius: 14px;
+      padding: 1.85rem;
+      backdrop-filter: blur(12px);
+      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
     }
-    .card:hover { transform: translateY(-3px); border-color: var(--primary); }
-    .card-icon { font-size: 1.75rem; margin-bottom: 0.75rem; }
-    .card h3 { font-size: 1.2rem; font-weight: 700; color: #fff; margin-bottom: 0.5rem; }
-    .card p { font-size: 0.925rem; color: var(--text-muted); }
-    section { margin: 4rem 0; }
-    h2 { font-size: 1.85rem; font-weight: 700; color: #fff; margin-bottom: 1.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.5rem; }
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: var(--card-hover);
+      box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
+    }
+    .card-icon { font-size: 2rem; margin-bottom: 0.85rem; }
+    .card h3 { font-size: 1.25rem; font-weight: 700; color: #fff; margin-bottom: 0.6rem; }
+    .card p { font-size: 0.935rem; color: var(--text-muted); line-height: 1.65; }
+    section { margin: 5rem 0; }
+    h2 {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 0.6rem;
+      letter-spacing: -0.02em;
+    }
     table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.95rem; }
-    th, td { text-align: left; padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); }
-    th { color: var(--text-muted); font-weight: 600; }
-    code { font-family: monospace; background: var(--code-bg); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85em; color: var(--primary); }
-    footer { text-align: center; color: var(--text-muted); font-size: 0.875rem; border-top: 1px solid var(--card-border); padding: 2.5rem 0; margin-top: 4rem; }
+    th, td { text-align: left; padding: 0.85rem 1rem; border-bottom: 1px solid var(--card-border); }
+    th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.05em; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 0.2rem 0.45rem; border-radius: 5px; font-size: 0.85em; color: var(--primary); }
+
+    /* About Section */
+    .about-card {
+      background: linear-gradient(135deg, rgba(24, 34, 50, 0.85) 0%, rgba(30, 27, 75, 0.4) 100%);
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      border-radius: 16px;
+      padding: 2.25rem;
+      margin-top: 2rem;
+      box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.5);
+    }
+    .about-header {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+    }
+    .about-avatar {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #38bdf8, #a855f7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      box-shadow: 0 0 25px rgba(56, 189, 248, 0.35);
+    }
+    .about-title h3 { font-size: 1.4rem; color: #fff; margin-bottom: 0.25rem; }
+    .about-meta { font-size: 0.9rem; color: var(--primary); font-weight: 500; }
+    .about-text {
+      color: var(--text-muted);
+      font-size: 1rem;
+      line-height: 1.8;
+      margin-bottom: 1.25rem;
+    }
+    .about-text strong { color: #fff; }
+    .pill-group { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+    .pill {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #cbd5e1;
+    }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      border-top: 1px solid var(--card-border);
+      padding: 3rem 0;
+      margin-top: 5rem;
+    }
   </style>
 </head>
 <body>
@@ -126,61 +239,75 @@
         <span class="badge">Linux / Fedora</span>
         <span class="badge">GNOME / Wayland</span>
         <span class="badge">C &amp; x86_64 ASM Engine</span>
+        <span class="badge green">&#x26A1; MacBook-Grade Tuning</span>
         <span class="badge ai">&#x1F916; AI-Assisted</span>
       </div>
       <h1>FF Power Manager</h1>
       <p class="subtitle">
-        Ultra-low-latency, zero-overhead Linux power profile manager and Lenovo ToF human presence sensor engine. Engineered for maximum battery endurance and instant responsiveness.
+        Ultra-low-latency, zero-overhead Linux power management and Lenovo ToF radar automation engine. Engineered for MacBook-like battery endurance, zero video stutter, and instant responsiveness.
       </p>
 
       <div class="cta-group">
-        <a href="https://github.com/lwrlock/ff-power-manager" class="btn btn-primary">View on GitHub</a>
-        <a href="https://github.com/lwrlock/ff-power-manager/releases" class="btn btn-outline">Releases (v1.0.0)</a>
+        <a href="https://github.com/lwrlock/ff-power-manager" class="btn btn-primary">&#x1F517; View on GitHub</a>
+        <a href="https://github.com/lwrlock/ff-power-manager/releases" class="btn btn-outline">&#x1F4E6; Releases (v1.0.0)</a>
       </div>
 
       <div class="terminal-box">
+        <span class="comment"># One-line installation &amp; full hardware optimization</span><br>
         $ git clone https://github.com/lwrlock/ff-power-manager.git<br>
         $ cd ff-power-manager &amp;&amp; sudo ./install.sh
       </div>
     </header>
 
     <section>
-      <h2>Key Features</h2>
+      <h2>Engineered Features</h2>
       <div class="grid">
         <div class="card">
           <div class="card-icon">&#x26A1;</div>
-          <h3>0.0% CPU &amp; Sub-Microsecond Speed</h3>
-          <p>Hand-written x86_64 assembly routines parse ST VL53L1 sensor packets with zero CPU cycle waste. RAM usage is below 1 MB.</p>
+          <h3>0.0% CPU &amp; Sub-Microsecond Engine</h3>
+          <p>Hand-written x86_64 assembly routines parse ST VL53L1 millimeter radar packets and write sysfs MSRs in microseconds with zero background CPU cycle waste. RAM usage &lt; 1 MB.</p>
         </div>
 
         <div class="card">
-          <div class="card-icon">&#x1F50B;</div>
-          <h3>~5W Idle Battery Optimization</h3>
-          <p>Achieves Windows-level idle power on Intel Core Ultra (Arrow Lake) via Package C8/C10 sleep, Intel Arc GuC SLPC power-saving, and kernel I/O tuning.</p>
+          <div class="card-icon">&#x1F34E;</div>
+          <h3>MacBook-Grade Race-to-Sleep</h3>
+          <p>Achieves Windows-level ~5W idle battery draw on Intel Core Ultra (Arrow Lake) without crippling the CPU. Turbo remains enabled on battery with responsive EPP so tasks burst and instantly return to C3/C8 sleep.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F3AC;</div>
+          <h3>Zero-Stutter Intel Arc GPU &amp; VA-API</h3>
+          <p>Eliminates video stuttering in GNOME balanced mode by enforcing an 800 MHz hardware base clock floor and unlocking 2350 MHz boost, paired with hardware Intel iHD VA-API decoding.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F4E1;</div>
-          <h3>Live ToF Presence Radar</h3>
-          <p>Real-time millimeter proximity tracking. Blanks the OLED panel when you leave the desk (> 1.2m) and wakes instantly when you sit down.</p>
+          <h3>Live ToF Proximity Radar</h3>
+          <p>Continuous millimeter-precision distance tracking. Automatically blanks the display when you walk away (> 1.2m) and wakes instantly when you sit down, with intelligent keyboard/mouse safety.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F5A5;</div>
           <h3>Dynamic 60Hz / 120Hz + VRR</h3>
-          <p>Automatically switches your 2.8K OLED screen down to 60Hz on battery (~2W direct savings) and restores 120Hz + VRR on AC power.</p>
+          <p>Automatically switches your 2.8K OLED screen down to 60Hz on battery (~2W direct savings) and restores butter-smooth 120Hz + Variable Refresh Rate on AC power.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F680;</div>
+          <h3>Hardware &amp; System Tuning</h3>
+          <p>Enforces PCIe ASPM powersupersave, auto runtime PM across 60 PCI devices, Intel Wi-Fi 7 power save, NVMe APST PS4 deep sleep, modern ZRAM zstd compression, and Google TCP BBR networking.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F4CA;</div>
           <h3>btop-Style TUI Dashboard</h3>
-          <p>Interactive multi-tab terminal UI (<code>ff-tui</code>) with single-key profile switching, live radar, and hardware verification.</p>
+          <p>Interactive terminal dashboard (<code>ff-tui</code>) with single-key profile switching, live millimeter radar stream, and real-time sysfs hardware verification.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F3A8;</div>
           <h3>Modern GTK4 / Libadwaita GUI</h3>
-          <p>Sleek desktop app with hero telemetry cards, animated distance progress bar, and desktop app grid launcher integration.</p>
+          <p>Sleek desktop application with hero telemetry cards, animated distance progress bar, system tray integration, and GDM login screen wallpaper synchronization.</p>
         </div>
       </div>
     </section>
@@ -192,44 +319,69 @@
           <tr>
             <th>Command</th>
             <th>Description</th>
+            <th>Execution Speed</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td><code>ffctl status</code></td>
-            <td>Instant hardware status (Watts, battery %, refresh rate, CPU EPP, ToF distance). Runs in &lt; 1 ms.</td>
+            <td>Instant hardware status (Watts, battery %, refresh rate, CPU EPP, ToF distance).</td>
+            <td>&lt; 0.8 ms (Native C)</td>
           </tr>
           <tr>
             <td><code>ffctl sensor live</code></td>
             <td>Stream continuous real-time distance and packet telemetry to terminal.</td>
+            <td>Raw HID / Real-Time</td>
           </tr>
           <tr>
             <td><code>ffctl apply battery</code></td>
-            <td>Apply and verify battery energy profiles directly in hardware MSRs.</td>
+            <td>Apply optimized battery profile (EPP balance_performance, Turbo ON, PCIe ASPM powersupersave).</td>
+            <td>Direct Hardware Sysfs</td>
           </tr>
           <tr>
             <td><code>ffctl apply ac</code></td>
-            <td>Switch to full AC performance mode with 120Hz + VRR and Intel Turbo Boost.</td>
+            <td>Switch to full AC performance mode with 120Hz + VRR and max clocks.</td>
+            <td>Direct Hardware Sysfs</td>
           </tr>
           <tr>
             <td><code>ff-tui</code></td>
             <td>Launch full interactive terminal dashboard.</td>
+            <td>Native ncurses</td>
           </tr>
         </tbody>
       </table>
     </section>
 
     <section>
-      <h2>&#x1F916; Developed with AI Assistance</h2>
-      <p style="color: var(--text-muted); font-size: 1rem; line-height: 1.8;">
-        This project was developed, reverse-engineered, and optimized in collaboration with <strong>Google DeepMind Antigravity</strong>. 
-        AI engineering assistance was utilized for disassembling the ST VL53L1 HID protocol, crafting high-performance x86_64 assembly routines, solving Intel Core Ultra Package C-State hardware sleep blockers, and modernizing the GTK4 / Libadwaita user experience.
-      </p>
+      <h2>About the Developer &amp; Project</h2>
+      <div class="about-card">
+        <div class="about-header">
+          <div class="about-avatar">&#x1F4BB;</div>
+          <div class="about-title">
+            <h3>Furkan (lwrlock)</h3>
+            <div class="about-meta">17 Years Old &bull; Computer Engineering Student &bull; Linux Enthusiast</div>
+          </div>
+        </div>
+        <p class="about-text">
+          Hi! I am Furkan, a 17-year-old Computer Engineering student. I created <strong>FF Power Manager</strong> to solve real-world hardware driver quirks on cutting-edge Intel Core Ultra (Arrow Lake) architecture and bring a true <strong>MacBook-like experience</strong> to Linux (Fedora &amp; GNOME): rock-solid battery endurance without sacrificing a single ounce of UI responsiveness, zero video stutter on 2.8K OLED panels, and zero background CPU overhead.
+        </p>
+        <p class="about-text">
+          <strong>&#x1F916; Transparent AI Collaboration:</strong> This project was engineered in continuous pair-programming collaboration with <strong>Google DeepMind Antigravity</strong>. AI assistance was utilized as a technical multiplier for reverse-engineering the Lenovo ST VL53L1 Time-of-Flight HID sensor protocol, authoring optimized x86_64 assembly routines, tracking Linux kernel power state transitions (Package C-States, PCIe ASPM, NVMe APST), and crafting the native GTK4 / Libadwaita interface.
+        </p>
+        <div class="pill-group">
+          <span class="pill">C &amp; x86_64 Assembly</span>
+          <span class="pill">Linux Kernel Sysfs &amp; MSRs</span>
+          <span class="pill">Intel Core Ultra &amp; Arc Pro</span>
+          <span class="pill">Samsung 2.8K OLED</span>
+          <span class="pill">Fedora &amp; GNOME Wayland</span>
+          <span class="pill">Open Source</span>
+        </div>
+      </div>
     </section>
 
     <footer>
-      <p>Released under the <a href="https://opensource.org/licenses/MIT" style="color: var(--primary);">MIT License</a>. Copyright &copy; 2026 lwrlock.</p>
-      <p style="margin-top: 0.5rem;"><a href="https://github.com/lwrlock/ff-power-manager" style="color: var(--text-muted);">github.com/lwrlock/ff-power-manager</a></p>
+      <p>Released under the <a href="https://opensource.org/licenses/MIT" style="color: var(--primary); text-decoration: none;">MIT License</a>. Copyright &copy; 2026 Furkan (lwrlock).</p>
+      <p style="margin-top: 0.5rem;"><a href="https://github.com/lwrlock/ff-power-manager" style="color: var(--text-muted); text-decoration: none;">github.com/lwrlock/ff-power-manager</a> &bull; <a href="https://lwrlock.github.io/ff-power-manager/" style="color: var(--text-muted); text-decoration: none;">lwrlock.github.io/ff-power-manager</a></p>
     </footer>
   </div>
 </body>
