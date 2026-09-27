@@ -283,6 +283,28 @@ static bool is_sensor_enabled(void) {
     return (strcmp(state, "disabled") != 0 && strcmp(state, "error") != 0);
 }
 
+static void get_active_aspm_policy(char *out, size_t out_size) {
+    char raw[128] = "";
+    if (!read_sysfs_string("/sys/module/pcie_aspm/parameters/policy", raw, sizeof(raw))) {
+        snprintf(out, out_size, "—");
+        return;
+    }
+    const char *open_b = strchr(raw, '[');
+    if (open_b) {
+        open_b++;
+        const char *close_b = strchr(open_b, ']');
+        if (close_b) {
+            size_t len = (size_t)(close_b - open_b);
+            if (len >= out_size) len = out_size - 1;
+            strncpy(out, open_b, len);
+            out[len] = '\0';
+            return;
+        }
+    }
+    strncpy(out, raw, out_size - 1);
+    out[out_size - 1] = '\0';
+}
+
 static void set_action_message(const char *msg) {
     snprintf(g_last_action_msg, sizeof(g_last_action_msg), "%s", msg);
     g_action_msg_expire = time(NULL) + 5; /* Visible for 5 seconds */
@@ -356,14 +378,14 @@ static void apply_profile(int profile_id, bool battery_mode) {
         read_sysfs_string("/sys/devices/system/cpu/cpu0/power/energy_perf_bias", epp, sizeof(epp));
     }
     char aspm[64] = "—";
-    read_sysfs_string("/sys/module/pcie_aspm/parameters/policy", aspm, sizeof(aspm));
+    get_active_aspm_policy(aspm, sizeof(aspm));
     char refresh[128] = "—";
     read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
     if (strcmp(refresh, "2880x1800@60.000") == 0) strcpy(refresh, "60Hz");
     else if (strcmp(refresh, "2880x1800@120.000+vrr") == 0) strcpy(refresh, "120Hz+VRR");
 
     char msg[256];
-    snprintf(msg, sizeof(msg), "✓ Applied [%s] -> EPP: %s | Turbo: %s | ASPM: %s (Verified in Hardware)",
+    snprintf(msg, sizeof(msg), "✓ Applied [%s] -> EPP: %s | Turbo: %s | ASPM: %s",
              prof_name, epp, (no_turbo == 0 ? "ON" : "OFF"), aspm);
     set_action_message(msg);
 }
@@ -500,7 +522,7 @@ static void draw_tab_overview(int width) {
     }
 
     char aspm[64] = "—";
-    read_sysfs_string("/sys/module/pcie_aspm/parameters/policy", aspm, sizeof(aspm));
+    get_active_aspm_policy(aspm, sizeof(aspm));
 
     char remaining_str[64] = "Calculating...";
     if (bat && watts > 1.0 && energy_wh > 0.0) {
@@ -570,8 +592,8 @@ static void draw_tab_overview(int width) {
 
     print_horizontal_border(width, "├", "─", "┤");
     print_box_line(width, "%sPROCESSOR & HARDWARE TUNING%s", C_CYAN ESC_BOLD, ESC_RESET);
-    print_box_line(width, "CPU Energy Bias (EPP) : %-22s Intel Turbo Boost : %s", epp, turbo_str);
-    print_box_line(width, "PCIe ASPM Link Policy : %-22s CPU Load & Power : 0.0%% Daemon Overhead", aspm);
+    print_box_line(width, "CPU Energy Bias (EPP) : %-15s Intel Turbo Boost : %s", epp, turbo_str);
+    print_box_line(width, "PCIe ASPM Link Policy : %-15s Daemon Overhead    : 0.0%% (Native ASM)", aspm);
 }
 
 static void draw_tab_battery(int width) {
@@ -744,11 +766,14 @@ int main(void) {
                 } else if (c == 't' || c == 'T') {
                     toggle_turbo();
                 } else if (c == 'a' || c == 'A') {
-                    apply_profile(1, g_current_tab == TAB_BATTERY || is_on_battery());
+                    bool bat_target = (g_current_tab == TAB_BATTERY) ? true : ((g_current_tab == TAB_AC) ? false : is_on_battery());
+                    apply_profile(1, bat_target);
                 } else if (c == 'b' || c == 'B') {
-                    apply_profile(2, g_current_tab == TAB_BATTERY || is_on_battery());
+                    bool bat_target = (g_current_tab == TAB_BATTERY) ? true : ((g_current_tab == TAB_AC) ? false : is_on_battery());
+                    apply_profile(2, bat_target);
                 } else if (c == 'c' || c == 'C') {
-                    apply_profile(3, g_current_tab == TAB_BATTERY || is_on_battery());
+                    bool bat_target = (g_current_tab == TAB_BATTERY) ? true : ((g_current_tab == TAB_AC) ? false : is_on_battery());
+                    apply_profile(3, bat_target);
                 } else if (c == 'r' || c == 'R') {
                     set_action_message("✓ Metrics and hardware status refreshed");
                 }

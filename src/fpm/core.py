@@ -75,7 +75,7 @@ PRESETS = {
             'hwp_dynamic_boost': 'off',
         },
         'maximum_battery': {
-            'gnome_profile': 'balanced',
+            'gnome_profile': 'power-saver',
             'epp': 'power',
             'turbo': False,
             'wifi_power_save': True,
@@ -444,8 +444,6 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     except Exception:
         pass
     gnome_prof = s['gnome_profile']
-    if mode == 'battery' and gnome_prof == 'power-saver':
-        gnome_prof = 'balanced'
     set_profile(gnome_prof)
     # Set EPP right after set_profile to ensure power-profiles-daemon cannot override it
     set_epp(s['epp'])

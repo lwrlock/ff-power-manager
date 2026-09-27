@@ -48,6 +48,28 @@ static bool read_sysfs_string(const char *path, char *buf, size_t buf_size) {
     return true;
 }
 
+static void get_active_aspm_policy(char *out, size_t out_size) {
+    char raw[128] = "";
+    if (!read_sysfs_string("/sys/module/pcie_aspm/parameters/policy", raw, sizeof(raw))) {
+        snprintf(out, out_size, "—");
+        return;
+    }
+    const char *open_b = strchr(raw, '[');
+    if (open_b) {
+        open_b++;
+        const char *close_b = strchr(open_b, ']');
+        if (close_b) {
+            size_t len = (size_t)(close_b - open_b);
+            if (len >= out_size) len = out_size - 1;
+            strncpy(out, open_b, len);
+            out[len] = '\0';
+            return;
+        }
+    }
+    strncpy(out, raw, out_size - 1);
+    out[out_size - 1] = '\0';
+}
+
 static char g_bat_path[128] = "";
 
 static void init_battery_path(void) {
@@ -221,7 +243,7 @@ static void print_status(void) {
 
     /* PCIe ASPM */
     char aspm[64] = "—";
-    read_sysfs_string("/sys/module/pcie_aspm/parameters/policy", aspm, sizeof(aspm));
+    get_active_aspm_policy(aspm, sizeof(aspm));
 
     /* Translate presence for terminal */
     const char *pres_tr = "Devre Dışı";
@@ -287,7 +309,7 @@ static int run_apply(const char *profile) {
         read_sysfs_string("/sys/devices/system/cpu/cpu0/power/energy_perf_bias", epp, sizeof(epp));
     }
     char aspm[64] = "unknown";
-    read_sysfs_string("/sys/module/pcie_aspm/parameters/policy", aspm, sizeof(aspm));
+    get_active_aspm_policy(aspm, sizeof(aspm));
     char refresh[128] = "unknown";
     read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
 
@@ -321,6 +343,10 @@ static void run_benchmark(void) {
 }
 
 int main(int argc, char *argv[]) {
+    if (geteuid() == 0) {
+        setuid(0);
+        setgid(0);
+    }
     if (argc < 2 || strcmp(argv[1], "status") == 0) {
         print_status();
         return 0;

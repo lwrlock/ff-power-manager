@@ -37,7 +37,7 @@ def cmd_apply(mode: str | None = None) -> int:
     elif mode in ('performance', 'extreme_performance'):
         from .core import apply, load_config, PRESETS
         cfg = load_config()
-        cfg['ac'].update(PRESETS['ac']['extreme_performance'])
+        cfg['ac'].update(PRESETS['ac']['performance'])
         apply('ac', cfg)
         sys.stdout.write("Applied profile: extreme_performance\n")
         return 0
@@ -51,7 +51,7 @@ def cmd_apply(mode: str | None = None) -> int:
     elif mode in ('responsive', 'responsive_battery'):
         from .core import apply, load_config, PRESETS
         cfg = load_config()
-        cfg['battery'].update(PRESETS['battery']['responsive_battery'])
+        cfg['battery'].update(PRESETS['battery']['responsive'])
         apply('battery', cfg)
         sys.stdout.write("Applied profile: responsive_battery\n")
         return 0
