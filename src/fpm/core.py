@@ -17,8 +17,8 @@ STATE_FILE = RUN_DIR / 'presence.state'
 DEFAULT_CONFIG = {
     'battery': {
         'gnome_profile': 'balanced',
-        'epp': 'balance_power',
-        'turbo': False,
+        'epp': 'balance_performance',
+        'turbo': True,
         'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
@@ -64,8 +64,8 @@ PRESETS = {
     'battery': {
         'recommended': {
             'gnome_profile': 'balanced',
-            'epp': 'balance_power',
-            'turbo': False,
+            'epp': 'balance_performance',
+            'turbo': True,
             'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
@@ -332,6 +332,28 @@ def set_nvme(value: str) -> None:
         return
     for p in glob.glob('/sys/class/nvme/nvme*/device/power/control'):
         write_if_changed(p, value)
+    # Enable Autonomous Power State Transition (APST) for deepest NVMe PS4 (0.005W) sleep
+    apst_node = '/sys/module/nvme_core/parameters/default_ps_max_latency_us'
+    if os.path.exists(apst_node):
+        write_if_changed(apst_node, '5500' if value == 'auto' else '0')
+
+
+def set_pci_runtime_pm(value: str = 'auto') -> None:
+    if value not in ('auto', 'on'):
+        return
+    for ctrl in glob.glob('/sys/bus/pci/devices/*/power/control'):
+        write_if_changed(ctrl, value)
+
+
+def set_cpu_freq_floor() -> None:
+    # Ensure CPU minimum frequency floor is at least 800 MHz (never 400 MHz), preventing stutter
+    for f in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq'):
+        try:
+            cur = int(pathlib.Path(f).read_text().strip())
+            if cur < 800000:
+                write_if_changed(f, '800000')
+        except Exception:
+            pass
 
 
 def set_gpu(value: str) -> None:
@@ -350,10 +372,18 @@ def set_gpu(value: str) -> None:
             write_if_changed(slpc_node, 'power_saving' if value == 'auto' else 'base')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
-            write_if_changed(boost_node, '800' if value == 'auto' else '2350')
+            write_if_changed(boost_node, '2350')
         min_node = os.path.join(card, 'gt_min_freq_mhz')
         if os.path.exists(min_node):
-            write_if_changed(min_node, '100')
+            # Keep minimum GPU frequency at hardware RP1 (800 MHz) or 500 MHz, never 100 MHz,
+            # preventing video stuttering and UI lag in GNOME Wayland while consuming negligible idle power
+            rp1_node = os.path.join(card, 'gt_RP1_freq_mhz')
+            rp1 = read_text(rp1_node)
+            target_min = rp1 if rp1 and rp1.isdigit() else '500'
+            write_if_changed(min_node, target_min)
+        max_node = os.path.join(card, 'gt_max_freq_mhz')
+        if os.path.exists(max_node):
+            write_if_changed(max_node, '2350')
 
 
 def set_pcie_aspm(value: str) -> None:
@@ -401,6 +431,8 @@ def apply_kernel_tunings(mode: str) -> None:
         write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '1500')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
+    # Always keep VFS cache pressure optimized for snappy desktop responsiveness
+    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '50')
 
 
 def apply(mode: str, cfg: dict | None = None) -> None:
@@ -418,9 +450,11 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     # Set EPP right after set_profile to ensure power-profiles-daemon cannot override it
     set_epp(s['epp'])
     set_turbo(s['turbo'])
+    set_cpu_freq_floor()
     set_hwp_dynamic_boost(s['hwp_dynamic_boost'])
     set_wifi_ps(s['wifi_power_save'])
     set_nvme(s['nvme_runtime_pm'])
+    set_pci_runtime_pm('auto' if s['gpu_runtime_pm'] == 'auto' else 'on')
     set_gpu(s['gpu_runtime_pm'])
     set_pcie_aspm(s['pcie_aspm'])
     set_usb(s['usb_autosuspend'])

@@ -64,8 +64,8 @@ cat <<'JSON' | sudo tee /etc/ff-power-manager/config.json >/dev/null
 {
   "battery": {
     "gnome_profile": "balanced",
-    "epp": "balance_power",
-    "turbo": false,
+    "epp": "balance_performance",
+    "turbo": true,
     "wifi_power_save": true,
     "nvme_runtime_pm": "auto",
     "gpu_runtime_pm": "auto",
@@ -103,7 +103,7 @@ sudo chown -R root:wheel /etc/ff-power-manager
 sudo chmod 664 /etc/ff-power-manager/*.json 2>/dev/null || true
 
 
-step '7/10' 'systemd, udev ve Masaüstü Dosyaları'
+step '7/10' 'systemd, udev, Çekirdek ve Sistem Optimizasyon Dosyaları'
 sudo install -m644 systemd/ff-power-apply.service /etc/systemd/system/
 sudo install -m644 systemd/ff-presence-sensor.service /etc/systemd/system/
 sudo install -m644 systemd/ff-presence-session.service /usr/local/lib/systemd/user/
@@ -112,6 +112,48 @@ sudo install -m644 applications/com.ff.PowerManager.desktop /usr/local/share/app
 sudo install -m644 applications/com.ff.PowerManager.TUI.desktop /usr/local/share/applications/
 sudo install -m644 applications/com.ff.PowerManager.metainfo.xml /usr/local/share/metainfo/
 sudo update-desktop-database /usr/local/share/applications/ 2>/dev/null || true
+
+# 1. PCIe Runtime Power Management Udev Kuralı (Boştaki tüm PCI aygıtlarının uykuya geçmesi)
+cat <<'EOF' | sudo tee /etc/udev/rules.d/98-pci-pm.rules >/dev/null
+# Auto runtime power management for all PCI devices
+ACTION=="add", SUBSYSTEM=="pci", ATTR{power/control}="auto"
+EOF
+
+# 2. Intel Wi-Fi 7 Güç Yönetimi ve U-APSD
+cat <<'EOF' | sudo tee /etc/modprobe.d/iwlwifi.conf >/dev/null
+# Intel Wi-Fi 7 power save & U-APSD
+options iwlwifi power_save=1 uapsd_disable=0
+EOF
+
+# 3. NVMe APST Derin Uyku (PS4) Desteği
+cat <<'EOF' | sudo tee /etc/modprobe.d/nvme.conf >/dev/null
+# NVMe Autonomous Power State Transition (APST)
+options nvme_core default_ps_max_latency_us=5500
+EOF
+
+# 4. ZRAM Modern zstd Sıkıştırma
+cat <<'EOF' | sudo tee /etc/systemd/zram-generator.conf >/dev/null
+[zram0]
+zram-size = ram / 2
+compression-algorithm = zstd
+EOF
+
+# 5. Çekirdek TCP BBR ve VFS Önbellek İyileştirmesi
+cat <<'EOF' | sudo tee /etc/sysctl.d/99-ff-system-tuning.conf >/dev/null
+# High performance networking and snappy desktop caching
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+vm.vfs_cache_pressure = 50
+vm.max_map_count = 2147483642
+fs.file-max = 2097152
+EOF
+sudo sysctl --system >/dev/null 2>&1 || true
+
+# 6. Donanımsal Video Hızlandırma (VA-API Intel iHD Driver)
+if ! grep -q "LIBVA_DRIVER_NAME=iHD" /etc/environment 2>/dev/null; then
+    echo "LIBVA_DRIVER_NAME=iHD" | sudo tee -a /etc/environment >/dev/null
+fi
+
 
 step '8/10' 'Kendi Kendini Sınama (Test Suite)'
 ./test_native
