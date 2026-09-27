@@ -94,6 +94,26 @@ class ConfigTests(unittest.TestCase):
         is_pres, dist = sensor.decode_report_4(bytes(buf_absent))
         self.assertFalse(is_pres)
 
+    @mock.patch('fpm.core.read_text')
+    def test_telemetry_helpers(self, mock_read):
+        # PCIe ASPM parser
+        mock_read.return_value = 'default performance powersave [powersupersave]'
+        self.assertEqual(core.pcie_aspm_current(), 'powersupersave')
+
+        # TCP CC parser
+        mock_read.return_value = 'bbr\n'
+        self.assertEqual(core.tcp_cc_current(), 'BBR (Google Düşük Gecikme)')
+
+        # ZRAM parser
+        mock_read.return_value = '[zstd] lzo-rle lzo lz4'
+        with mock.patch('os.path.exists', return_value=True):
+            self.assertEqual(core.zram_current(), 'ZRAM (zstd) Aktif')
+
+    @mock.patch('fpm.core.read_text')
+    def test_gpu_min_freq_helper(self, mock_read):
+        mock_read.return_value = '800\n'
+        self.assertEqual(core.gpu_min_freq_current(), '800 MHz (Kasma Önleyici)')
+
 
 if __name__ == '__main__':
     unittest.main()

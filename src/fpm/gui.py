@@ -41,28 +41,28 @@ DEFAULT_PRESENCE = {
 
 CUSTOM_CSS = b"""
 .card-hero {
-    background: alpha(@theme_selected_bg_color, 0.12);
+    background: rgba(56, 189, 248, 0.08);
     border-radius: 12px;
-    border: 1px solid alpha(@theme_selected_bg_color, 0.25);
+    border: 1px solid rgba(56, 189, 248, 0.25);
     padding: 10px;
 }
 .badge-active {
-    background-color: alpha(@success_color, 0.2);
-    color: @success_color;
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
     border-radius: 9999px;
     padding: 3px 10px;
     font-weight: bold;
 }
 .badge-standby {
-    background-color: alpha(@warning_color, 0.2);
-    color: @warning_color;
+    background-color: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
     border-radius: 9999px;
     padding: 3px 10px;
     font-weight: bold;
 }
 .badge-disabled {
-    background-color: alpha(@view_fg_color, 0.1);
-    color: alpha(@view_fg_color, 0.6);
+    background-color: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
     border-radius: 9999px;
     padding: 3px 10px;
 }
@@ -158,6 +158,12 @@ class MainWindow(Adw.ApplicationWindow):
         refresh.connect('clicked', lambda *_: self.refresh_status())
         header.pack_end(refresh)
 
+        # About button in header bar
+        about_btn = Gtk.Button(icon_name='help-about-symbolic', tooltip_text='Hakkında')
+        about_btn.add_css_class('flat')
+        about_btn.connect('clicked', lambda *_: self._show_about())
+        header.pack_end(about_btn)
+
         toolbar.add_top_bar(header)
         toolbar.set_content(self.stack)
 
@@ -168,7 +174,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(self._overview_page(), 'overview', 'Durum', 'view-dashboard-symbolic')
         self.stack.add_titled_with_icon(self._mode_page('battery'), 'battery', 'Batarya', 'battery-good-symbolic')
         self.stack.add_titled_with_icon(self._mode_page('ac'), 'ac', 'Adaptör', 'power-profile-performance-symbolic')
-        self.stack.add_titled_with_icon(self._presence_page(), 'presence', 'Ekran & Presence', 'system-lock-screen-symbolic')
+        self.stack.add_titled_with_icon(self._presence_page(), 'presence', 'Ekran ve Presence', 'system-lock-screen-symbolic')
         self.stack.add_titled_with_icon(self._diagnostics_page(), 'diagnostics', 'Tanılama', 'utilities-system-monitor-symbolic')
 
         # Automatically start live telemetry polling in GUI (every 2.5s)
@@ -208,6 +214,24 @@ class MainWindow(Adw.ApplicationWindow):
         if not launched:
             self.toast('Terminal açılamadı. Terminalde "ff-tui" çalıştırabilirsiniz.')
 
+    def _show_about(self) -> None:
+        dialog = Adw.AboutDialog(
+            application_name='FF Power Manager',
+            application_icon='preferences-system-power',
+            developer_name='Furkan (@lwrlock)',
+            version='1.1.0',
+            website='https://lwrlock.github.io/ff-power-manager/',
+            issue_url='https://github.com/lwrlock/ff-power-manager/issues',
+            license_type=Gtk.License.MIT_X11,
+            comments=(
+                "Lenovo IdeaPad Pro 5 14IAH10 ve modern Intel mobil platformlar için "
+                "MacBook düzeyinde pil verimliliği ve sıfır kasma garantili mimari.\n\n"
+                "17 yaşındaki bir bilgisayar mühendisliği öğrencisinin vizyonuyla, "
+                "yapay zeka iş birliğiyle açık kaynak olarak geliştirilmiştir."
+            ),
+        )
+        dialog.present(self)
+
     def _overview_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title='Durum', icon_name='view-dashboard-symbolic')
 
@@ -216,7 +240,7 @@ class MainWindow(Adw.ApplicationWindow):
         page.add(hero_group)
 
         hero_row = Adw.ActionRow(
-            title='Terminal Dashboard (C & x86_64 Assembly Engine)',
+            title='Terminal Dashboard (C &amp; x86_64 Assembly Engine)',
             subtitle='btop tarzı dinamik sekmeli arayüz, canlı ToF radarı ve 0.0% CPU yükü.'
         )
         hero_row.add_css_class('card-hero')
@@ -246,6 +270,10 @@ class MainWindow(Adw.ApplicationWindow):
             ('epp', 'CPU EPP Ölçeği', 'applications-science-symbolic'),
             ('turbo', 'Intel Turbo Boost', 'speedometer-symbolic'),
             ('pcie_aspm', 'PCIe ASPM Tasarruf', 'drive-harddisk-symbolic'),
+            ('gpu_perf', 'Intel Arc GPU Tabanı', 'applications-graphics-symbolic'),
+            ('vaapi', 'Donanımsal Video Çözücü', 'media-playback-start-symbolic'),
+            ('net_opt', 'Ağ Algoritması', 'network-wireless-symbolic'),
+            ('zram', 'Sıkıştırılmış Bellek', 'drive-multidisk-symbolic'),
         ]:
             row = self._action_row(title, '—', icon)
             self.rows[key] = row
@@ -253,7 +281,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Group 2: ST VL53L1 ToF Presence Radar
         radar_group = Adw.PreferencesGroup(
-            title='ST VL53L1 ToF Varlık Radarı & Mesafe',
+            title='ST VL53L1 ToF Varlık Radarı &amp; Mesafe',
             description='Lenovo Intel ISH kızılötesi sensörü (0.0% CPU yükü, milimetre hassasiyet).'
         )
         page.add(radar_group)
@@ -371,7 +399,7 @@ class MainWindow(Adw.ApplicationWindow):
         return page
 
     def _presence_page(self) -> Adw.PreferencesPage:
-        page = Adw.PreferencesPage(title='Ekran & Presence', icon_name='system-lock-screen-symbolic')
+        page = Adw.PreferencesPage(title='Ekran &amp; Presence', icon_name='system-lock-screen-symbolic')
         
         display_grp = Adw.PreferencesGroup(title='Akıllı Ekran Yenileme (Samsung 2.8K OLED)', description='Batarya kullanımını ve akıcılığı optimize eder.')
         page.add(display_grp)
@@ -484,6 +512,10 @@ class MainWindow(Adw.ApplicationWindow):
             'epp': s['epp'] or '—',
             'turbo': 'Açık (Dynamic Boost)' if s['turbo'] else ('Kapalı' if s['turbo'] is not None else '—'),
             'pcie_aspm': s.get('pcie_aspm', '—'),
+            'gpu_perf': s.get('gpu_perf', '—'),
+            'vaapi': s.get('vaapi', '—'),
+            'net_opt': s.get('net_opt', '—'),
+            'zram': s.get('zram', '—'),
         }
         for key, value in values.items():
             if hasattr(self, 'rows') and key in self.rows:

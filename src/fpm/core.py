@@ -532,6 +532,62 @@ def current_refresh_rate() -> str:
     return '120 Hz'
 
 
+def pcie_aspm_current() -> str:
+    p = '/sys/module/pcie_aspm/parameters/policy'
+    txt = read_text(p)
+    if txt:
+        import re
+        m = re.search(r'\[(.*?)\]', txt)
+        if m:
+            return m.group(1)
+        return txt.strip()
+    return '—'
+
+
+def gpu_min_freq_current() -> str:
+    for node in ['/sys/class/drm/card1/gt_min_freq_mhz', '/sys/class/drm/card0/gt_min_freq_mhz']:
+        txt = read_text(node)
+        if txt and txt.strip():
+            return f"{txt.strip()} MHz (Kasma Önleyici)"
+    return 'Dinamik'
+
+
+def vaapi_current() -> str:
+    drv = os.environ.get('LIBVA_DRIVER_NAME')
+    if not drv:
+        if os.path.exists('/etc/profile.d/vaapi-intel.sh'):
+            drv = 'Intel iHD (Iris Xe Donanımsal)'
+        else:
+            drv = 'Intel iHD (Donanımsal)'
+    else:
+        drv = f"{drv} (Donanımsal)"
+    return drv
+
+
+def tcp_cc_current() -> str:
+    cc = read_text('/proc/sys/net/ipv4/tcp_congestion_control')
+    if cc:
+        val = cc.strip().upper()
+        if val == 'BBR':
+            return 'BBR (Google Düşük Gecikme)'
+        return val
+    return 'Cubic'
+
+
+def zram_current() -> str:
+    alg_file = '/sys/block/zram0/comp_algorithm'
+    alg_txt = read_text(alg_file)
+    alg = 'Aktif'
+    if alg_txt:
+        import re
+        m = re.search(r'\[(.*?)\]', alg_txt)
+        if m:
+            alg = m.group(1)
+    if os.path.exists('/dev/zram0'):
+        return f"ZRAM ({alg}) Aktif"
+    return 'Devre Dışı'
+
+
 def status_snapshot() -> dict:
     mode = 'battery' if on_battery_from_sysfs() else 'ac'
     epp = read_text('/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
@@ -551,7 +607,13 @@ def status_snapshot() -> dict:
         'turbo': None if turbo_raw is None else turbo_raw == '0',
         'hwp_dynamic_boost': hwp,
         'wifi_power_save': wifi,
+        'pcie_aspm': pcie_aspm_current(),
+        'gpu_perf': gpu_min_freq_current(),
+        'vaapi': vaapi_current(),
+        'net_opt': tcp_cc_current(),
+        'zram': zram_current(),
         'presence_state': read_text(STATE_FILE),
         'config': load_config(),
         'sensor': load_sensor_config(),
     }
+
