@@ -13,14 +13,7 @@
 }
 
 /* Soft dimmed icons & labels for OLED anti-burn-in (avoids 100% white glare) */
-#panel .panel-button,
-#panel .panel-button .clock,
-#panel .panel-button .clock-display,
-#panel .panel-button .system-status-icon,
-#panel .panel-button .app-menu-icon,
-#panel .panel-button StIcon,
-#panel .panel-button StLabel,
-#panel .panel-button .appindicator-trayicons-box StIcon {
+#panel .panel-button {
     color: rgba(215, 222, 230, 0.78) !important;
     transition-duration: 180ms;
 }
@@ -31,21 +24,26 @@
     transition-duration: 180ms;
 }
 
-/* Full brightness on hover, active, focus, and overview */
+/* Hover / active / focus: background only on the button itself, NOT on child elements */
 #panel .panel-button:hover,
 #panel .panel-button:active,
 #panel .panel-button:focus,
 #panel .panel-button:overview,
-#panel .panel-button:checked,
-#panel .panel-button:hover .clock,
-#panel .panel-button:hover .clock-display,
-#panel .panel-button:hover .system-status-icon,
-#panel .panel-button:hover .app-menu-icon,
+#panel .panel-button:checked {
+    color: #ffffff !important;
+    background-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* Child elements get transparent background so icons don't show individual white boxes */
 #panel .panel-button:hover StIcon,
 #panel .panel-button:hover StLabel,
+#panel .panel-button:hover .system-status-icon,
+#panel .panel-button:hover .app-menu-icon,
+#panel .panel-button:hover .clock,
+#panel .panel-button:hover .clock-display,
 #panel .panel-button:hover .appindicator-trayicons-box StIcon {
     color: #ffffff !important;
-    background-color: rgba(255, 255, 255, 0.12) !important;
+    background-color: transparent !important;
 }
 
 #panel .panel-button#panelActivities:hover .workspace-dot {
@@ -57,9 +55,11 @@
     font-weight: 600;
     padding: 0 4px;
     color: rgba(110, 230, 180, 0.85) !important;
+    background-color: transparent !important;
     transition-duration: 180ms;
 }
 
 .ff-power-label:hover {
     color: #6ee6b4 !important;
+    background-color: transparent !important;
 }
