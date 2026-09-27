@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://lwrlock.github.io/ff-power-manager/sitemap.xml

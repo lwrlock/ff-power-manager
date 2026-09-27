@@ -5,7 +5,6 @@ import os
 import signal
 import sys
 import time
-from pathlib import Path
 
 from .core import apply, load_config, on_battery_from_sysfs
 
@@ -84,11 +83,9 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
                 sys.stdout.flush()
                 try:
                     apply('ac' if not on_battery_from_sysfs() else 'battery', cfg)
-                    helper = Path('/usr/local/lib/ff-power-manager/ff-power-helper')
-                    if helper.exists():
-                        import subprocess
-                        subprocess.run(['pkexec', str(helper), 'set-epp', 'performance'],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # Service runs as root via systemd — write EPP directly without pkexec
+                    from .core import set_epp
+                    set_epp('performance')
                 except Exception as exc:
                     sys.stderr.write(f"Failed to engage boost: {exc}\n")
         else:

@@ -3,37 +3,62 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FF Power Manager — Ultra-Low Latency Linux Power & ToF Presence Engine</title>
-  <meta name="description" content="MacBook-grade Linux power profile manager, zero-stutter Intel Arc GPU tuning, and Lenovo ToF presence radar engine built in C and x86_64 Assembly for Fedora & GNOME.">
-  <meta name="keywords" content="ff-power-manager, linux power management, fedora, lenovo presence sensor, tof sensor, oled 60hz 120hz, battery life, intel core ultra, intel arc, btop tui, c assembly, lwrlock">
+  <title>FF Power Manager — MacBook-Grade Linux Battery &amp; Power Management for Fedora / GNOME</title>
+  <meta name="description" content="FF Power Manager: Open-source Linux power manager delivering MacBook-like ~5W idle battery life on Lenovo IdeaPad with Intel Core Ultra. Features ToF presence sensor, zero-stutter Intel Arc GPU, OLED burn-in protection, auto GameMode boost, and GTK4 GUI — built in C and x86_64 Assembly.">
+  <meta name="keywords" content="ff-power-manager, linux power manager, fedora battery life, gnome power management, lenovo ideapad linux, intel core ultra battery, tof presence sensor linux, oled anti burn-in linux, intel arc gpu linux, battery conservation mode linux, linux 5w idle, tlp alternative, auto-cpufreq alternative, btop tui, ffctl, lwrlock, open source linux utility">
   <meta name="author" content="Furkan (lwrlock)">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
+  <meta name="theme-color" content="#0b0f17">
   <link rel="canonical" href="https://lwrlock.github.io/ff-power-manager/">
 
-  <!-- OpenGraph Metadata -->
+  <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="FF Power Manager — MacBook-Grade Linux Power & ToF Presence Engine">
-  <meta property="og:description" content="0.0% CPU overhead, ~5W idle battery tuning, live ToF millimeter radar, zero-stutter Intel Arc GPU fix, and dynamic 60Hz/120Hz OLED switching.">
+  <meta property="og:title" content="FF Power Manager — MacBook-Grade Linux Battery &amp; Power Management">
+  <meta property="og:description" content="Open-source Linux power manager: ~5W idle on Lenovo IdeaPad, Intel Core Ultra battery tuning, ToF presence radar, OLED care, auto GameMode, GTK4 GUI. Built in C &amp; x86_64 Assembly.">
   <meta property="og:url" content="https://lwrlock.github.io/ff-power-manager/">
   <meta property="og:site_name" content="FF Power Manager">
+  <meta property="og:image" content="https://opengraph.githubassets.com/1/lwrlock/ff-power-manager">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter / X Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="FF Power Manager — MacBook-Grade Linux Power &amp; Battery Manager">
+  <meta name="twitter:description" content="Open-source Linux power manager for Fedora/GNOME. ~5W idle, Lenovo hardware controls, ToF presence sensor, OLED anti-burn-in, GameMode boost. Built in C &amp; Assembly.">
+  <meta name="twitter:image" content="https://opengraph.githubassets.com/1/lwrlock/ff-power-manager">
+  <meta name="twitter:site" content="@lwrlock">
 
   <!-- Schema.org JSON-LD -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "FF Power Manager",
-    "softwareVersion": "1.2.0",
-    "operatingSystem": "Linux (Fedora, GNOME, Wayland)",
-    "applicationCategory": "UtilitiesApplication",
-    "description": "MacBook-grade Linux power profile manager and Lenovo ToF presence sensor engine in C and x86_64 Assembly.",
-    "license": "https://opensource.org/licenses/MIT",
-    "url": "https://lwrlock.github.io/ff-power-manager/",
-    "author": {
-      "@type": "Person",
-      "name": "Furkan",
-      "jobTitle": "Computer Engineering Student",
-      "url": "https://github.com/lwrlock"
-    }
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "FF Power Manager",
+        "alternateName": "ffctl",
+        "softwareVersion": "1.2.0",
+        "operatingSystem": "Linux (Fedora, GNOME, Wayland)",
+        "applicationCategory": "UtilitiesApplication",
+        "applicationSubCategory": "Power Management",
+        "description": "MacBook-grade Linux power manager: ~5W idle on Lenovo IdeaPad, Intel Core Ultra battery tuning, ToF presence sensor, OLED anti-burn-in, GameMode auto-boost, GTK4 GUI. Built in C and x86_64 Assembly.",
+        "license": "https://opensource.org/licenses/MIT",
+        "url": "https://lwrlock.github.io/ff-power-manager/",
+        "downloadUrl": "https://github.com/lwrlock/ff-power-manager/releases/latest",
+        "codeRepository": "https://github.com/lwrlock/ff-power-manager",
+        "releaseNotes": "https://github.com/lwrlock/ff-power-manager/releases/tag/v1.2.0",
+        "softwareRequirements": "Linux kernel 5.19+, GNOME Shell 44+, Fedora 38+",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": {
+          "@type": "Person",
+          "name": "Furkan",
+          "url": "https://github.com/lwrlock",
+          "jobTitle": "Computer Engineering Student",
+          "description": "17-year-old Computer Engineering student building open-source Linux system tools."
+        }
+      }
+    ]
   }
   </script>
 

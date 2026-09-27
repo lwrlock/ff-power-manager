@@ -1,4 +1,65 @@
+/* FF Power Indicator & Samsung 2.8K OLED Top Bar Care Stylesheet */
+
+/* True Black (#000000) pure zero-watt panel background */
+#panel,
+#panelBox {
+    background-color: #000000 !important;
+    transition-duration: 250ms;
+}
+
+#panel .panel-corner {
+    -panel-corner-background-color: #000000 !important;
+    -panel-corner-border-color: transparent !important;
+}
+
+/* Soft dimmed icons & labels for OLED anti-burn-in (avoids 100% white glare) */
+#panel .panel-button,
+#panel .panel-button .clock,
+#panel .panel-button .clock-display,
+#panel .panel-button .system-status-icon,
+#panel .panel-button .app-menu-icon,
+#panel .panel-button StIcon,
+#panel .panel-button StLabel,
+#panel .panel-button .appindicator-trayicons-box StIcon {
+    color: rgba(215, 222, 230, 0.78) !important;
+    transition-duration: 180ms;
+}
+
+/* Workspace dots dimmed for OLED longevity */
+#panel .panel-button#panelActivities .workspace-dot {
+    background-color: rgba(215, 222, 230, 0.75) !important;
+    transition-duration: 180ms;
+}
+
+/* Full brightness on hover, active, focus, and overview */
+#panel .panel-button:hover,
+#panel .panel-button:active,
+#panel .panel-button:focus,
+#panel .panel-button:overview,
+#panel .panel-button:checked,
+#panel .panel-button:hover .clock,
+#panel .panel-button:hover .clock-display,
+#panel .panel-button:hover .system-status-icon,
+#panel .panel-button:hover .app-menu-icon,
+#panel .panel-button:hover StIcon,
+#panel .panel-button:hover StLabel,
+#panel .panel-button:hover .appindicator-trayicons-box StIcon {
+    color: #ffffff !important;
+    background-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+#panel .panel-button#panelActivities:hover .workspace-dot {
+    background-color: #ffffff !important;
+}
+
+/* FF Power Indicator Wattage Display */
 .ff-power-label {
     font-weight: 600;
     padding: 0 4px;
+    color: rgba(110, 230, 180, 0.85) !important;
+    transition-duration: 180ms;
+}
+
+.ff-power-label:hover {
+    color: #6ee6b4 !important;
 }
