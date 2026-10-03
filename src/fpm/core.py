@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
         'pcie_aspm': 'powersupersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
-        'hwp_dynamic_boost': 'off',
+        'hwp_dynamic_boost': 'on',
     },
     'ac': {
         'gnome_profile': 'balanced',
@@ -72,7 +72,7 @@ PRESETS = {
             'pcie_aspm': 'powersupersave',
             'usb_autosuspend': 'auto',
             'audio_powersave': 'on',
-            'hwp_dynamic_boost': 'off',
+            'hwp_dynamic_boost': 'on',
         },
         'maximum_battery': {
             'gnome_profile': 'power-saver',
