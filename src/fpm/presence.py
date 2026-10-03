@@ -21,6 +21,7 @@ DEFAULT = {
     'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
+    'promotion_120hz': True,
     'oled_screen_care': True,
     'oled_dim_inactive_sec': 45,
 }
@@ -45,6 +46,7 @@ def load_config() -> dict:
         out['away_delay'] = max(0, min(300, int(out['away_delay'])))
     except Exception:
         out['away_delay'] = 10
+    out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
     try:
         out['oled_dim_inactive_sec'] = max(15, min(300, int(out.get('oled_dim_inactive_sec', 45))))
     except Exception:
@@ -82,6 +84,7 @@ class PresenceController:
         GLib.timeout_add_seconds(3, self._periodic_power_check)
 
     def _periodic_power_check(self) -> bool:
+        self.cfg = load_config()
         self._read_power_mode_once()
         if self.cfg.get('oled_screen_care', True):
             idletime_ms = self._get_idletime_ms()
@@ -155,7 +158,10 @@ class PresenceController:
     def _update_refresh_rate(self, mode: str) -> None:
         if not self.cfg.get('auto_refresh_rate', True):
             return
-        target_mode = '2880x1800@60.000' if mode == 'battery' else '2880x1800@120.000+vrr'
+        if self.cfg.get('promotion_120hz', True):
+            target_mode = '2880x1800@120.000+vrr'
+        else:
+            target_mode = '2880x1800@60.000' if mode == 'battery' else '2880x1800@120.000+vrr'
         try:
             res = self.session.call_sync(
                 'org.gnome.Mutter.DisplayConfig',

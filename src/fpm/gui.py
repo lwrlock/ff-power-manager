@@ -39,6 +39,7 @@ DEFAULT_PRESENCE = {
     'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
+    'promotion_120hz': True,
     'oled_screen_care': True,
     'oled_dim_inactive_sec': 45,
 }
@@ -474,9 +475,16 @@ class MainWindow(Adw.ApplicationWindow):
             description='Seamlessly balances battery longevity and extreme 120Hz smoothness.'
         )
         page.add(display_grp)
+        self.promotion_switch = Adw.SwitchRow(
+            title='ProMotion 120Hz + VRR (MacBook Style)',
+            subtitle='Keeps 120 Hz active on battery. Hardware VRR drops to 30-48Hz during static screens to save power.'
+        )
+        self.promotion_switch.set_active(bool(self.pcfg.get('promotion_120hz', True)))
+        display_grp.add(self.promotion_switch)
+
         self.refresh_switch = Adw.SwitchRow(
             title='Dynamic Refresh Rate Switching',
-            subtitle='Automatically switches to 60 Hz on battery, and 120 Hz + VRR on AC power.'
+            subtitle='Enables automatic display mode management via Mutter D-Bus.'
         )
         self.refresh_switch.set_active(bool(self.pcfg.get('auto_refresh_rate', True)))
         display_grp.add(self.refresh_switch)
@@ -816,6 +824,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.pcfg['away_delay'] = int(self.away_delay_spin.get_value())
         self.pcfg['auto_refresh_rate'] = self.refresh_switch.get_active()
+        self.pcfg['promotion_120hz'] = self.promotion_switch.get_active()
         self.pcfg['oled_screen_care'] = self.oled_care_switch.get_active()
         self.pcfg['oled_dim_inactive_sec'] = int(self.oled_dim_spin.get_value())
         for k, sw in self.presence_switches.items():
