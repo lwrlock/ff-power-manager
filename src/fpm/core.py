@@ -476,12 +476,17 @@ def apply_kernel_tunings(mode: str) -> None:
     if mode == 'battery':
         write_if_changed('/proc/sys/vm/laptop_mode', '5')
         write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '6000')
+        write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '12000')
         write_if_changed('/proc/sys/kernel/nmi_watchdog', '0')
+        write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'med_power_with_dipm')
     else:
         write_if_changed('/proc/sys/vm/laptop_mode', '0')
         write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '1500')
+        write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '3000')
+        write_if_changed('/proc/sys/kernel/nmi_watchdog', '0')
+        write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
     # Always keep VFS cache pressure optimized for snappy desktop responsiveness
