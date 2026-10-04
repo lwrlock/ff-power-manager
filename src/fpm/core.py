@@ -17,7 +17,7 @@ STATE_FILE = RUN_DIR / 'presence.state'
 DEFAULT_CONFIG = {
     'battery': {
         'gnome_profile': 'balanced',
-        'epp': 'balance_performance',
+        'epp': 'balance_power',
         'turbo': True,
         'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
         'pcie_aspm': 'powersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
-        'hwp_dynamic_boost': 'on',
+        'hwp_dynamic_boost': 'off',
     },
     'ac': {
         'gnome_profile': 'balanced',
@@ -490,6 +490,22 @@ def optimize_touchpad() -> None:
         write_if_changed(path, target)
 
 
+def optimize_sd_card() -> None:
+    # If no SD card media is inserted, unbind sdhci-pci to allow root port 00:1c.0 to suspend into D3hot/cold
+    sd_dev = '/sys/bus/pci/devices/0000:57:00.0'
+    if not os.path.exists(sd_dev):
+        return
+    has_card = any(os.path.exists(p) for p in glob.glob('/sys/block/mmcblk*'))
+    if not has_card and on_battery_from_sysfs():
+        try:
+            unbind = '/sys/bus/pci/drivers/sdhci-pci/unbind'
+            if os.path.exists(unbind):
+                pathlib.Path(unbind).write_text('0000:57:00.0')
+            write_if_changed(os.path.join(sd_dev, 'power/control'), 'auto')
+        except Exception:
+            pass
+
+
 def apply_kernel_tunings(mode: str) -> None:
     if mode == 'battery':
         write_if_changed('/proc/sys/vm/laptop_mode', '5')
@@ -535,6 +551,8 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_audio(s['audio_powersave'])
     apply_kernel_tunings(mode)
     optimize_touchpad()
+    optimize_sd_card()
+
 
 
 
