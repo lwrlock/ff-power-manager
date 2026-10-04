@@ -351,12 +351,11 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
         write_if_changed(ctrl, 'auto')
 
 
-def set_cpu_freq_floor() -> None:
+def set_cpu_freq_floor(mode: str | None = None) -> None:
     # Tiered frequency floors & responsiveness tuning for hybrid Arrow Lake (Ultra 9 285H):
-    # - Lion Cove P-cores (CPUs 0-5): floor at 1.2 GHz, EPB 3 for instantaneous UI response (zero stutter)
-    # - Skymont E-cores (CPUs 6-13): floor at 1.0 GHz, EPB 4 for smooth multitasking
-    # - Low-Power E-cores (CPUs 14-15): floor at 800 MHz, EPB 6 for ultra-low power background tasks
-    # C-states (C6/C10) remain 100% active, guaranteeing deep sleep & low battery draw at idle.
+    # - On AC: Keep Lion Cove P-cores at 1.2 GHz, E-cores at 1.0 GHz, EPB 3/4 for instant 120 FPS burst.
+    # - On battery: Let cores scale down to hardware minimum (400 MHz) and EPB 8 for deep C10 idle sleep and sub-5W draw.
+    on_bat = on_battery_from_sysfs() if mode is None else (mode == 'battery')
     for cpu_dir in sorted(glob.glob('/sys/devices/system/cpu/cpu[0-9]*')):
         cpu_name = os.path.basename(cpu_dir)
         try:
@@ -364,26 +363,30 @@ def set_cpu_freq_floor() -> None:
         except ValueError:
             continue
 
-        if cpu_idx <= 5:       # Lion Cove P-cores
-            target_min = '1200000'
-            target_epb = '3'
-        elif cpu_idx <= 13:    # Skymont E-cores
-            target_min = '1000000'
-            target_epb = '4'
-        else:                  # Low-Power E-cores on SoC
-            target_min = '800000'
-            target_epb = '6'
+        if on_bat:
+            target_min = '400000'
+            target_epb = '8' if cpu_idx <= 13 else '10'
+        else:
+            if cpu_idx <= 5:       # Lion Cove P-cores
+                target_min = '1200000'
+                target_epb = '3'
+            elif cpu_idx <= 13:    # Skymont E-cores
+                target_min = '1000000'
+                target_epb = '4'
+            else:                  # Low-Power E-cores on SoC
+                target_min = '800000'
+                target_epb = '6'
 
         min_node = os.path.join(cpu_dir, 'cpufreq/scaling_min_freq')
         if os.path.exists(min_node):
             try:
                 cur = int(pathlib.Path(min_node).read_text().strip())
-                if cur < int(target_min):
+                if on_bat or cur < int(target_min):
                     write_if_changed(min_node, target_min)
             except Exception:
                 pass
 
-        # In balanced/default profiles, adjust EPB per-core to eliminate ramp latency
+        # Adjust EPB per-core
         epp_node = os.path.join(cpu_dir, 'cpufreq/energy_performance_preference')
         epp = read_text(epp_node) or ''
         if epp in ('balance_performance', 'default', 'balance_power'):
@@ -401,18 +404,22 @@ def set_gpu(value: str) -> None:
         if vendor == '0x8086' and cls and cls.startswith('0x03'):
             write_if_changed(os.path.join(dev, 'power/control'), value)
 
+    on_bat = on_battery_from_sysfs()
     # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
     for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
-            # Always keep Xe GPU on 'base' profile:
-            # 'power_saving' causes severe frame drops during 120Hz/2.8K Wayland rendering.
-            # Intel Xe hardware RC6 power-gates execution units to 0W when idle.
-            write_if_changed(power_prof, 'base')
+            write_if_changed(power_prof, 'power_saving' if on_bat else 'base')
         min_node = os.path.join(gt_freq, 'min_freq')
         if os.path.exists(min_node):
             is_gt1 = 'gt1' in gt_freq
-            write_if_changed(min_node, '500' if is_gt1 else '800')
+            if on_bat:
+                rpn_node = os.path.join(gt_freq, 'rpn_freq')
+                rpn = read_text(rpn_node)
+                target_min = rpn.strip() if rpn and rpn.strip().isdigit() else ('100' if is_gt1 else '800')
+            else:
+                target_min = '500' if is_gt1 else '800'
+            write_if_changed(min_node, target_min)
         max_node = os.path.join(gt_freq, 'max_freq')
         if os.path.exists(max_node):
             rp0_node = os.path.join(gt_freq, 'rp0_freq')
@@ -424,7 +431,7 @@ def set_gpu(value: str) -> None:
     for card in glob.glob('/sys/class/drm/card*'):
         slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
         if os.path.exists(slpc_node):
-            write_if_changed(slpc_node, 'base')
+            write_if_changed(slpc_node, 'power_saving' if on_bat else 'base')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
             write_if_changed(boost_node, '2350')
@@ -433,7 +440,7 @@ def set_gpu(value: str) -> None:
             rp1_node = os.path.join(card, 'gt_RP1_freq_mhz')
             rp1 = read_text(rp1_node)
             target_min = rp1 if rp1 and rp1.isdigit() else '500'
-            write_if_changed(min_node, target_min)
+            write_if_changed(min_node, '100' if on_bat else target_min)
         max_node = os.path.join(card, 'gt_max_freq_mhz')
         if os.path.exists(max_node):
             write_if_changed(max_node, '2350')
@@ -466,10 +473,11 @@ def set_audio(value: str) -> None:
 
 
 def optimize_touchpad() -> None:
-    # Only keep the touchpad device itself awake to prevent lag,
-    # without blocking the Intel LPSS host controller from low-power states
+    # On battery allow touchpad controller to enter low-power sleep, eliminating 1200+ interrupts/sec.
+    # On AC keep awake for zero-latency response.
+    target = 'auto' if on_battery_from_sysfs() else 'on'
     for path in glob.glob('/sys/bus/i2c/devices/i2c-SYNA*/power/control'):
-        write_if_changed(path, 'on')
+        write_if_changed(path, target)
 
 
 def apply_kernel_tunings(mode: str) -> None:
@@ -506,7 +514,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     # Set EPP right after set_profile to ensure power-profiles-daemon cannot override it
     set_epp(s['epp'])
     set_turbo(s['turbo'])
-    set_cpu_freq_floor()
+    set_cpu_freq_floor(mode)
     set_hwp_dynamic_boost(s['hwp_dynamic_boost'])
     set_wifi_ps(s['wifi_power_save'])
     set_nvme(s['nvme_runtime_pm'])
