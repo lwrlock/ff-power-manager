@@ -365,7 +365,22 @@ def set_gpu(value: str) -> None:
         if vendor == '0x8086' and cls and cls.startswith('0x03'):
             write_if_changed(os.path.join(dev, 'power/control'), value)
 
-    # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6)
+    # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
+    for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
+        power_prof = os.path.join(gt_freq, 'power_profile')
+        if os.path.exists(power_prof):
+            write_if_changed(power_prof, 'power_saving' if value == 'auto' else 'base')
+        min_node = os.path.join(gt_freq, 'min_freq')
+        if os.path.exists(min_node):
+            write_if_changed(min_node, '800')
+        max_node = os.path.join(gt_freq, 'max_freq')
+        if os.path.exists(max_node):
+            rp0_node = os.path.join(gt_freq, 'rp0_freq')
+            rp0 = read_text(rp0_node)
+            target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else '2350'
+            write_if_changed(max_node, target_max)
+
+    # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6 legacy i915 nodes)
     for card in glob.glob('/sys/class/drm/card*'):
         slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
         if os.path.exists(slpc_node):
@@ -543,6 +558,14 @@ def pcie_aspm_current() -> str:
 
 
 def gpu_min_freq_current() -> str:
+    for node in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0/act_freq'):
+        txt = read_text(node)
+        if txt and txt.strip():
+            return f"{txt.strip()} MHz (Intel Arc Xe-LPG+)"
+    for node in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0/cur_freq'):
+        txt = read_text(node)
+        if txt and txt.strip():
+            return f"{txt.strip()} MHz (Intel Arc Xe-LPG+)"
     for node in ['/sys/class/drm/card1/gt_min_freq_mhz', '/sys/class/drm/card0/gt_min_freq_mhz']:
         txt = read_text(node)
         if txt and txt.strip():
