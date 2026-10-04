@@ -14,11 +14,11 @@ from .core import RUN_DIR, STATE_FILE, on_battery_from_sysfs
 CONF = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
 DEFAULT = {
     'enabled': True,
-    'away_confirm': 3.0,
-    'away_delay': 10,
+    'away_confirm': 5.0,
+    'away_delay': 60,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': True,
+    'screen_off_on_away': False,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,

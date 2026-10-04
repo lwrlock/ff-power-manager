@@ -50,8 +50,13 @@ static double get_monotonic_time(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
+static void ensure_run_dir(void) {
+    mkdir(RUN_DIR, 0777);
+    chmod(RUN_DIR, 01777);
+}
+
 static void publish_state(const char *state) {
-    mkdir(RUN_DIR, 0755);
+    ensure_run_dir();
     size_t len = strlen(state);
     char buf[64];
     if (len + 2 < sizeof(buf)) {
@@ -59,6 +64,7 @@ static void publish_state(const char *state) {
         buf[len] = '\n';
         buf[len + 1] = '\0';
         asm_atomic_write_file(TMP_STATE_FILE, STATE_FILE, buf, len + 1);
+        chmod(STATE_FILE, 0666);
     }
     printf("FPM native sensor: %s\n", state);
     fflush(stdout);
@@ -83,7 +89,7 @@ static void publish_telemetry(const char *state, int distance_cm, int threshold_
     g_last_telemetry_dist = distance_cm;
     strncpy(g_last_telemetry_state, state, sizeof(g_last_telemetry_state) - 1);
 
-    mkdir(RUN_DIR, 0755);
+    ensure_run_dir();
     char json[512];
     int n = snprintf(json, sizeof(json),
         "{\n"
@@ -100,6 +106,7 @@ static void publish_telemetry(const char *state, int distance_cm, int threshold_
         (strcmp(state, "disabled") != 0 && strcmp(state, "error") != 0) ? "true" : "false");
     if (n > 0 && n < (int)sizeof(json)) {
         asm_atomic_write_file(TMP_TELEMETRY_FILE, TELEMETRY_FILE, json, (size_t)n);
+        chmod(TELEMETRY_FILE, 0666);
     }
 }
 
@@ -369,6 +376,8 @@ int main(int argc, char *argv[]) {
     double last_report_time = 0.0;
     double candidate_start = 0.0;
     int candidate_reports = 0;
+    double absent_candidate_start = 0.0;
+    int absent_candidate_reports = 0;
     double initial_deadline = get_monotonic_time() + cfg.silence_timeout;
     uint64_t packet_count = 0;
     int current_distance_cm = 0;
@@ -414,6 +423,8 @@ int main(int argc, char *argv[]) {
                     current_state = "absent";
                     candidate_start = 0.0;
                     candidate_reports = 0;
+                    absent_candidate_start = 0.0;
+                    absent_candidate_reports = 0;
                     publish_state(current_state);
                     publish_telemetry(current_state, current_distance_cm, cfg.distance_threshold * 10, packet_count, now - last_report_time, dev_path);
                 }
@@ -424,6 +435,8 @@ int main(int argc, char *argv[]) {
                 }
             } else if (strcmp(current_state, "unknown") == 0 && now >= initial_deadline) {
                 current_state = "absent";
+                absent_candidate_start = 0.0;
+                absent_candidate_reports = 0;
                 publish_state(current_state);
                 publish_telemetry(current_state, current_distance_cm, cfg.distance_threshold * 10, packet_count, now - last_report_time, dev_path);
             }
@@ -455,17 +468,32 @@ int main(int argc, char *argv[]) {
             current_distance_cm = (int)(dist_mm / 10);
         }
 
-        /* Sensor explicitly signaled user absence or user moved beyond 1.2m */
+        /* Sensor explicitly signaled user absence or user moved beyond threshold */
         if (eval == 0) {
+            candidate_start = 0.0;
+            candidate_reports = 0;
             if (strcmp(current_state, "absent") != 0) {
-                current_state = "absent";
-                candidate_start = 0.0;
-                candidate_reports = 0;
-                publish_state(current_state);
+                if (absent_candidate_start <= 0.0 || (now - absent_candidate_start > 8.0)) {
+                    absent_candidate_start = now;
+                    absent_candidate_reports = 1;
+                } else {
+                    absent_candidate_reports++;
+                }
+                /* Confirm absent only if at least 4 consecutive reports over >= 3.0s */
+                if (absent_candidate_reports >= 4 && (now - absent_candidate_start >= 3.0)) {
+                    current_state = "absent";
+                    absent_candidate_start = 0.0;
+                    absent_candidate_reports = 0;
+                    publish_state(current_state);
+                }
             }
             publish_telemetry(current_state, current_distance_cm, cfg.distance_threshold * 10, packet_count, 0.0, dev_path);
             continue;
         }
+
+        /* User is present within threshold: reset absence counters */
+        absent_candidate_start = 0.0;
+        absent_candidate_reports = 0;
 
         /* User is present within 1.2m */
         if (strcmp(current_state, "present") == 0) {

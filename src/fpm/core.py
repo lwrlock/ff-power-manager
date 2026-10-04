@@ -328,6 +328,15 @@ def set_wifi_ps(value: bool | str) -> None:
             run(['/usr/sbin/iw', 'dev', iface, 'set', 'power_save', want])
 
 
+def enable_pcie_l1_substates() -> None:
+    try:
+        # Downstream endpoint first, then upstream root port (PCIe Base Spec section 5.5.4)
+        subprocess.run(['/usr/bin/setpci', '-s', '02:00.0', '230.b=0f'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['/usr/bin/setpci', '-s', '00:06.2', '208.b=1f'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def set_nvme(value: str) -> None:
     if value == 'system':
         return
@@ -337,6 +346,7 @@ def set_nvme(value: str) -> None:
     apst_node = '/sys/module/nvme_core/parameters/default_ps_max_latency_us'
     if os.path.exists(apst_node):
         write_if_changed(apst_node, '5500' if value == 'auto' else '0')
+    enable_pcie_l1_substates()
 
 
 def set_pci_runtime_pm(value: str = 'auto') -> None:
