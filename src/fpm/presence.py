@@ -62,7 +62,10 @@ class PresenceController:
         self.last_state = None
         self.screen_off_by_fpm = False
         self.is_dimmed = False
-        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            RUN_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         self.dir_file = Gio.File.new_for_path(str(RUN_DIR))
         self.monitor = self.dir_file.monitor_directory(Gio.FileMonitorFlags.NONE, None)
         self.monitor.connect('changed', self._fs_changed)
@@ -158,10 +161,15 @@ class PresenceController:
     def _update_refresh_rate(self, mode: str) -> None:
         if not self.cfg.get('auto_refresh_rate', True):
             return
-        if self.cfg.get('promotion_120hz', True):
-            target_mode = '2880x1800@120.000+vrr'
+        # Automatic refresh rate switching:
+        # - Battery: 60Hz (saves 2.5 - 3 Watts on the 2.8K OLED display)
+        # - AC (Plugged in): 120Hz + VRR (full 120 FPS buttery smooth ProMotion)
+        force_120_battery = self.cfg.get('force_120hz_on_battery', False)
+        if mode == 'battery' and not force_120_battery:
+            target_mode = '2880x1800@60.000'
         else:
-            target_mode = '2880x1800@60.000' if mode == 'battery' else '2880x1800@120.000+vrr'
+            target_mode = '2880x1800@120.000+vrr'
+
         try:
             res = self.session.call_sync(
                 'org.gnome.Mutter.DisplayConfig',
@@ -180,6 +188,10 @@ class PresenceController:
                     current_mode = m[0]
                     break
             if current_mode == target_mode:
+                try:
+                    (RUN_DIR / 'refresh.rate').write_text(target_mode)
+                except Exception:
+                    pass
                 return
 
             lm = logical_monitors[0]
@@ -196,7 +208,7 @@ class PresenceController:
                     serial,
                     2,
                     new_lm,
-                    {}
+                    {'layout-mode': GLib.Variant('u', 1)}
                 )),
                 None, Gio.DBusCallFlags.NONE, 2000, None
             )
