@@ -342,7 +342,12 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
     if value not in ('auto', 'on'):
         return
     for ctrl in glob.glob('/sys/bus/pci/devices/*/power/control'):
-        write_if_changed(ctrl, value)
+        dev_dir = os.path.dirname(os.path.dirname(ctrl))
+        cls = read_text(os.path.join(dev_dir, 'class')) or ''
+        # Let set_gpu manage graphics controllers (class 0x03xxxx)
+        if cls.startswith('0x03'):
+            continue
+        write_if_changed(ctrl, 'auto')
 
 
 def set_cpu_freq_floor() -> None:
@@ -467,7 +472,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_hwp_dynamic_boost(s['hwp_dynamic_boost'])
     set_wifi_ps(s['wifi_power_save'])
     set_nvme(s['nvme_runtime_pm'])
-    set_pci_runtime_pm('auto' if s['gpu_runtime_pm'] == 'auto' else 'on')
+    set_pci_runtime_pm('auto')
     set_gpu(s['gpu_runtime_pm'])
     set_pcie_aspm(s['pcie_aspm'])
     set_usb(s['usb_autosuspend'])
