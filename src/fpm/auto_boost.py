@@ -64,6 +64,8 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
 
     boosted = False
     last_seen_time = 0.0
+    last_profile = ''
+    last_tune_time = 0.0
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine started.\n")
     sys.stdout.flush()
@@ -101,6 +103,36 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
                     apply(mode, cfg)
                 except Exception as exc:
                     sys.stderr.write(f"Failed to restore power profile: {exc}\n")
+
+            # Continuously ensure zero-stutter hardware floors (P-cores 1.2GHz, Xe GPU base profile, ASPM powersave)
+            if not boosted:
+                needs_tune = False
+                try:
+                    with open('/sys/devices/system/cpu/cpu0/power/energy_perf_bias', 'r') as f:
+                        if int(f.read().strip()) > 3:
+                            needs_tune = True
+                except Exception:
+                    pass
+                if not needs_tune:
+                    try:
+                        with open('/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq', 'r') as f:
+                            if int(f.read().strip()) < 1200000:
+                                needs_tune = True
+                    except Exception:
+                        pass
+                if not needs_tune and (now - last_tune_time >= 15.0):
+                    needs_tune = True
+
+                if needs_tune:
+                    last_tune_time = now
+                    try:
+                        from .core import set_cpu_freq_floor, set_gpu, set_pcie_aspm
+                        set_cpu_freq_floor()
+                        set_gpu('auto' if on_battery_from_sysfs() else 'system')
+                        if on_battery_from_sysfs():
+                            set_pcie_aspm('powersave')
+                    except Exception as exc:
+                        sys.stderr.write(f"Background floor tuning failed: {exc}\n")
 
         time.sleep(poll_interval)
 

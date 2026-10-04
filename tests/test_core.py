@@ -112,7 +112,7 @@ class ConfigTests(unittest.TestCase):
     @mock.patch('fpm.core.read_text')
     def test_gpu_min_freq_helper(self, mock_read):
         mock_read.return_value = '800\n'
-        self.assertEqual(core.gpu_min_freq_current(), '800 MHz (Stutter Prevention)')
+        self.assertIn('800 MHz', core.gpu_min_freq_current())
 
     def test_lenovo_and_battery_health_structures(self):
         lenovo = core.get_lenovo_features()

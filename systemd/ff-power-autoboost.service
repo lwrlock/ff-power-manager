@@ -1,6 +1,6 @@
 [Unit]
 Description=FF Power Manager Auto Dynamic Boost & GameMode Engine
-After=multi-user.target ff-power-apply.service
+After=power-profiles-daemon.service ff-power-apply.service
 Wants=ff-power-apply.service
 
 [Service]

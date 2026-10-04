@@ -8,4 +8,4 @@ ExecStart=/usr/local/bin/ffctl apply
 Nice=10
 
 [Install]
-WantedBy=multi-user.target graphical.target
+WantedBy=multi-user.target

@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
         'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
-        'pcie_aspm': 'powersupersave',
+        'pcie_aspm': 'powersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
         'hwp_dynamic_boost': 'on',
@@ -69,7 +69,7 @@ PRESETS = {
             'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
-            'pcie_aspm': 'powersupersave',
+            'pcie_aspm': 'powersave',
             'usb_autosuspend': 'auto',
             'audio_powersave': 'on',
             'hwp_dynamic_boost': 'on',
@@ -279,16 +279,17 @@ def set_epp(value: str) -> None:
         return
     for p in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference'):
         write_if_changed(p, value)
-    bias_map = {
-        'power': '15',
-        'balance_power': '8',
-        'default': '6',
-        'balance_performance': '4',
-        'performance': '0',
-    }
-    if value in bias_map:
+    if value == 'performance':
         for p in glob.glob('/sys/devices/system/cpu/cpu*/power/energy_perf_bias'):
-            write_if_changed(p, bias_map[value])
+            write_if_changed(p, '0')
+    elif value == 'power':
+        for p in glob.glob('/sys/devices/system/cpu/cpu*/power/energy_perf_bias'):
+            write_if_changed(p, '15')
+    elif value == 'balance_power':
+        for p in glob.glob('/sys/devices/system/cpu/cpu*/power/energy_perf_bias'):
+            write_if_changed(p, '8')
+    elif value in ('balance_performance', 'default'):
+        set_cpu_freq_floor()
 
 
 def set_turbo(value: bool | str) -> None:
@@ -351,14 +352,44 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
 
 
 def set_cpu_freq_floor() -> None:
-    # Ensure CPU minimum frequency floor is at least 800 MHz (never 400 MHz), preventing stutter
-    for f in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq'):
+    # Tiered frequency floors & responsiveness tuning for hybrid Arrow Lake (Ultra 9 285H):
+    # - Lion Cove P-cores (CPUs 0-5): floor at 1.2 GHz, EPB 3 for instantaneous UI response (zero stutter)
+    # - Skymont E-cores (CPUs 6-13): floor at 1.0 GHz, EPB 4 for smooth multitasking
+    # - Low-Power E-cores (CPUs 14-15): floor at 800 MHz, EPB 6 for ultra-low power background tasks
+    # C-states (C6/C10) remain 100% active, guaranteeing deep sleep & low battery draw at idle.
+    for cpu_dir in sorted(glob.glob('/sys/devices/system/cpu/cpu[0-9]*')):
+        cpu_name = os.path.basename(cpu_dir)
         try:
-            cur = int(pathlib.Path(f).read_text().strip())
-            if cur < 800000:
-                write_if_changed(f, '800000')
-        except Exception:
-            pass
+            cpu_idx = int(cpu_name.replace('cpu', ''))
+        except ValueError:
+            continue
+
+        if cpu_idx <= 5:       # Lion Cove P-cores
+            target_min = '1200000'
+            target_epb = '3'
+        elif cpu_idx <= 13:    # Skymont E-cores
+            target_min = '1000000'
+            target_epb = '4'
+        else:                  # Low-Power E-cores on SoC
+            target_min = '800000'
+            target_epb = '6'
+
+        min_node = os.path.join(cpu_dir, 'cpufreq/scaling_min_freq')
+        if os.path.exists(min_node):
+            try:
+                cur = int(pathlib.Path(min_node).read_text().strip())
+                if cur < int(target_min):
+                    write_if_changed(min_node, target_min)
+            except Exception:
+                pass
+
+        # In balanced/default profiles, adjust EPB per-core to eliminate ramp latency
+        epp_node = os.path.join(cpu_dir, 'cpufreq/energy_performance_preference')
+        epp = read_text(epp_node) or ''
+        if epp in ('balance_performance', 'default', 'balance_power'):
+            epb_node = os.path.join(cpu_dir, 'power/energy_perf_bias')
+            if os.path.exists(epb_node):
+                write_if_changed(epb_node, target_epb)
 
 
 def set_gpu(value: str) -> None:
@@ -374,29 +405,31 @@ def set_gpu(value: str) -> None:
     for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
-            write_if_changed(power_prof, 'power_saving' if value == 'auto' else 'base')
+            # Always keep Xe GPU on 'base' profile:
+            # 'power_saving' causes severe frame drops during 120Hz/2.8K Wayland rendering.
+            # Intel Xe hardware RC6 power-gates execution units to 0W when idle.
+            write_if_changed(power_prof, 'base')
         min_node = os.path.join(gt_freq, 'min_freq')
         if os.path.exists(min_node):
-            write_if_changed(min_node, '800')
+            is_gt1 = 'gt1' in gt_freq
+            write_if_changed(min_node, '500' if is_gt1 else '800')
         max_node = os.path.join(gt_freq, 'max_freq')
         if os.path.exists(max_node):
             rp0_node = os.path.join(gt_freq, 'rp0_freq')
             rp0 = read_text(rp0_node)
-            target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else '2350'
+            target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else ('1300' if 'gt1' in gt_freq else '2350')
             write_if_changed(max_node, target_max)
 
     # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6 legacy i915 nodes)
     for card in glob.glob('/sys/class/drm/card*'):
         slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
         if os.path.exists(slpc_node):
-            write_if_changed(slpc_node, 'power_saving' if value == 'auto' else 'base')
+            write_if_changed(slpc_node, 'base')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
             write_if_changed(boost_node, '2350')
         min_node = os.path.join(card, 'gt_min_freq_mhz')
         if os.path.exists(min_node):
-            # Keep minimum GPU frequency at hardware RP1 (800 MHz) or 500 MHz, never 100 MHz,
-            # preventing video stuttering and UI lag in GNOME Wayland while consuming negligible idle power
             rp1_node = os.path.join(card, 'gt_RP1_freq_mhz')
             rp1 = read_text(rp1_node)
             target_min = rp1 if rp1 and rp1.isdigit() else '500'
