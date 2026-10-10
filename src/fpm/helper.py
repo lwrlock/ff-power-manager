@@ -38,7 +38,7 @@ def cmd_apply(mode: str | None = None) -> int:
         from .core import apply, load_config, PRESETS
         cfg = load_config()
         cfg['ac'].update(PRESETS['ac']['performance'])
-        apply('ac', cfg)
+        apply('extreme_performance', cfg)
         sys.stdout.write("Applied profile: extreme_performance\n")
         return 0
     elif mode in ('cool_quiet',):

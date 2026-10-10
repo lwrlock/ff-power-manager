@@ -363,9 +363,11 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
 
 def set_cpu_freq_floor(mode: str | None = None) -> None:
     # Tiered frequency floors & responsiveness tuning for hybrid Arrow Lake (Ultra 9 285H):
+    # - On extreme_performance (AC): Pin Lion Cove P-cores to 2.2 GHz, E-cores 1.2 GHz, EPB 0 for max gaming FPS.
     # - On AC: Keep Lion Cove P-cores at 1.2 GHz, E-cores at 1.0 GHz, EPB 3/4 for instant 120 FPS burst.
     # - On battery: Let cores scale down to hardware minimum (400 MHz) and EPB 8 for deep C10 idle sleep and sub-5W draw.
     on_bat = on_battery_from_sysfs() if mode is None else (mode == 'battery')
+    is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
     for cpu_dir in sorted(glob.glob('/sys/devices/system/cpu/cpu[0-9]*')):
         cpu_name = os.path.basename(cpu_dir)
         try:
@@ -376,6 +378,16 @@ def set_cpu_freq_floor(mode: str | None = None) -> None:
         if on_bat:
             target_min = '400000'
             target_epb = '8' if cpu_idx <= 13 else '10'
+        elif is_extreme:
+            if cpu_idx <= 5:       # Lion Cove P-cores
+                target_min = '2200000'
+                target_epb = '0'
+            elif cpu_idx <= 13:    # Skymont E-cores
+                target_min = '1200000'
+                target_epb = '0'
+            else:                  # Low-Power E-cores on SoC
+                target_min = '800000'
+                target_epb = '4'
         else:
             if cpu_idx <= 5:       # Lion Cove P-cores
                 target_min = '1200000'
@@ -391,7 +403,7 @@ def set_cpu_freq_floor(mode: str | None = None) -> None:
         if os.path.exists(min_node):
             try:
                 cur = int(pathlib.Path(min_node).read_text().strip())
-                if on_bat or cur < int(target_min):
+                if on_bat or cur != int(target_min):
                     write_if_changed(min_node, target_min)
             except Exception:
                 pass
@@ -399,22 +411,27 @@ def set_cpu_freq_floor(mode: str | None = None) -> None:
         # Adjust EPB per-core
         epp_node = os.path.join(cpu_dir, 'cpufreq/energy_performance_preference')
         epp = read_text(epp_node) or ''
-        if epp in ('balance_performance', 'default', 'balance_power'):
+        if is_extreme:
+            epb_node = os.path.join(cpu_dir, 'power/energy_perf_bias')
+            if os.path.exists(epb_node):
+                write_if_changed(epb_node, target_epb)
+        elif epp in ('balance_performance', 'default', 'balance_power'):
             epb_node = os.path.join(cpu_dir, 'power/energy_perf_bias')
             if os.path.exists(epb_node):
                 write_if_changed(epb_node, target_epb)
 
 
-def set_gpu(value: str) -> None:
-    if value == 'system':
-        return
-    for dev in glob.glob('/sys/bus/pci/devices/*'):
-        vendor = read_text(os.path.join(dev, 'vendor'))
-        cls = read_text(os.path.join(dev, 'class'))
-        if vendor == '0x8086' and cls and cls.startswith('0x03'):
-            write_if_changed(os.path.join(dev, 'power/control'), value)
+def set_gpu(value: str = 'system', mode: str | None = None) -> None:
+    if value != 'system':
+        for dev in glob.glob('/sys/bus/pci/devices/*'):
+            vendor = read_text(os.path.join(dev, 'vendor'))
+            cls = read_text(os.path.join(dev, 'class'))
+            if vendor == '0x8086' and cls and cls.startswith('0x03'):
+                write_if_changed(os.path.join(dev, 'power/control'), value)
 
-    on_bat = on_battery_from_sysfs()
+    on_bat = on_battery_from_sysfs() if mode is None else (mode == 'battery')
+    is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
+
     # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
     for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
         power_prof = os.path.join(gt_freq, 'power_profile')
@@ -427,6 +444,8 @@ def set_gpu(value: str) -> None:
                 rpn_node = os.path.join(gt_freq, 'rpn_freq')
                 rpn = read_text(rpn_node)
                 target_min = rpn.strip() if rpn and rpn.strip().isdigit() else ('100' if is_gt1 else '800')
+            elif is_extreme:
+                target_min = '500' if is_gt1 else '1800'
             else:
                 target_min = '500' if is_gt1 else '800'
             write_if_changed(min_node, target_min)
@@ -449,7 +468,7 @@ def set_gpu(value: str) -> None:
         if os.path.exists(min_node):
             rp1_node = os.path.join(card, 'gt_RP1_freq_mhz')
             rp1 = read_text(rp1_node)
-            target_min = rp1 if rp1 and rp1.isdigit() else '500'
+            target_min = '1800' if is_extreme else (rp1 if rp1 and rp1.isdigit() else '500')
             write_if_changed(min_node, '100' if on_bat else target_min)
         max_node = os.path.join(card, 'gt_max_freq_mhz')
         if os.path.exists(max_node):
@@ -529,7 +548,22 @@ def apply_kernel_tunings(mode: str) -> None:
 
 def apply(mode: str, cfg: dict | None = None) -> None:
     cfg = cfg or load_config()
-    s = cfg[mode]
+    is_extreme = mode in ('extreme_performance', 'performance')
+    if is_extreme:
+        base_mode = 'ac'
+        s = deepcopy(cfg['ac'])
+        s['gnome_profile'] = 'performance'
+        s['epp'] = 'performance'
+        s['pcie_aspm'] = 'performance'
+        s['wifi_power_save'] = False
+        s['hwp_dynamic_boost'] = 'on'
+    elif mode == 'battery':
+        base_mode = 'battery'
+        s = cfg['battery']
+    else:
+        base_mode = 'ac'
+        s = cfg['ac']
+
     try:
         RUN_DIR.mkdir(parents=True, exist_ok=True)
         (RUN_DIR / 'power.mode').write_text(mode)
@@ -545,11 +579,11 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_wifi_ps(s['wifi_power_save'])
     set_nvme(s['nvme_runtime_pm'])
     set_pci_runtime_pm('auto')
-    set_gpu(s['gpu_runtime_pm'])
+    set_gpu(s['gpu_runtime_pm'], mode)
     set_pcie_aspm(s['pcie_aspm'])
     set_usb(s['usb_autosuspend'])
     set_audio(s['audio_powersave'])
-    apply_kernel_tunings(mode)
+    apply_kernel_tunings(base_mode)
     optimize_touchpad()
     optimize_sd_card()
 

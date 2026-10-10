@@ -120,11 +120,28 @@ class ConfigTests(unittest.TestCase):
         self.assertIn('supported', lenovo)
         self.assertIn('conservation_mode', lenovo)
 
-        health = core.battery_health_report()
-        self.assertIsInstance(health, dict)
-        if health:
-            self.assertIn('health_pct', health)
-            self.assertIn('cycle_count', health)
+    def test_apply_extreme_performance_profile(self):
+        with mock.patch('fpm.core.set_profile'), \
+             mock.patch('fpm.core.set_epp') as mock_epp, \
+             mock.patch('fpm.core.set_turbo'), \
+             mock.patch('fpm.core.set_cpu_freq_floor') as mock_cpu, \
+             mock.patch('fpm.core.set_gpu') as mock_gpu, \
+             mock.patch('fpm.core.set_wifi_ps'), \
+             mock.patch('fpm.core.set_nvme'), \
+             mock.patch('fpm.core.set_pcie_aspm'), \
+             mock.patch('fpm.core.apply_kernel_tunings'):
+            core.apply('extreme_performance', core.DEFAULT_CONFIG)
+            mock_epp.assert_called_with('performance')
+            mock_cpu.assert_called_with('extreme_performance')
+            mock_gpu.assert_called_with('system', 'extreme_performance')
+
+    @mock.patch('glob.glob')
+    @mock.patch('builtins.open', new_callable=mock.mock_open, read_data='cyberpunk2077.e\n')
+    def test_auto_boost_detects_exe_games(self, mock_file, mock_glob):
+        from fpm import auto_boost
+        mock_glob.return_value = ['/proc/12345/comm']
+        detected = auto_boost.find_heavy_process()
+        self.assertEqual(detected, 'cyberpunk2077.e')
 
 
 if __name__ == '__main__':

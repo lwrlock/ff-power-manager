@@ -9,23 +9,31 @@ import time
 from .core import apply, load_config, on_battery_from_sysfs
 
 HEAVY_PROCESSES = {
-    # Gaming & Launchers
-    'steam',
-    'steamwebhelper',
+    # Gaming & Wine / Proton
     'gamescope',
     'lutris',
     'heroic',
-    'gamemoded',
     'wine',
     'wine64',
     'wineserver',
+    'wine-preloader',
+    'wine64-preloader',
     'proton',
+    # Emulators
+    'rpcs3',
+    'yuzu',
+    'ryujinx',
+    'retroarch',
+    'dolphin-emu',
+    'cemu',
+    'pcsx2',
     # Content Creation & Renderers
     'blender',
     'obs',
     'ffmpeg',
     'kdenlive',
     'davinci-resolve',
+    'handbrake',
     # Compilers & Build Systems
     'gcc',
     'g++',
@@ -37,6 +45,24 @@ HEAVY_PROCESSES = {
     'ninja',
 }
 
+KNOWN_GAMES = {
+    'cs2',
+    'dota2',
+    'hl2_linux',
+    'portal2_linux',
+    'valheim.x86_64',
+    'factorio',
+    'deadcells',
+    'celeste',
+    'hollow_knight.x',
+    'rustclient',
+    'terraria.bin.x8',
+    'minecraft',
+    'javaw',
+    'sober',
+    'warframe.x64.ex',
+}
+
 _running = True
 
 
@@ -46,13 +72,19 @@ def _sig_handler(signum, frame):
 
 
 def find_heavy_process() -> str | None:
-    """Lightweight procfs scanner (< 2ms) to identify running heavy workloads."""
+    """Lightweight procfs scanner (< 15ms) to identify running heavy workloads and games."""
     for comm_path in glob.glob('/proc/[0-9]*/comm'):
         try:
             with open(comm_path, 'r', encoding='utf-8', errors='ignore') as f:
                 name = f.read().strip().lower()
-                if name in HEAVY_PROCESSES:
+                if not name:
+                    continue
+                if name in HEAVY_PROCESSES or name in KNOWN_GAMES:
                     return name
+                # Windows games running via Wine/Proton (.exe or truncated to 15 chars e.g. .e)
+                if name.endswith('.exe') or name.endswith('.e') or '.exe' in name:
+                    if name not in ('wsl.exe',):
+                        return name
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
     return None
@@ -79,15 +111,15 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
             if not boosted:
                 boosted = True
                 cfg = load_config()
+                on_bat = on_battery_from_sysfs()
+                # On battery, strictly preserve power saving; only engage extreme_performance on AC
+                target_mode = 'extreme_performance' if not on_bat else 'battery'
                 sys.stdout.write(
-                    f"Auto Dynamic Boost: Activated by '{heavy}'. Engaging maximum hardware performance.\n"
+                    f"Auto Dynamic Boost: Activated by '{heavy}'. Engaging '{target_mode}' mode.\n"
                 )
                 sys.stdout.flush()
                 try:
-                    apply('ac' if not on_battery_from_sysfs() else 'battery', cfg)
-                    # Service runs as root via systemd — write EPP directly without pkexec
-                    from .core import set_epp
-                    set_epp('performance')
+                    apply(target_mode, cfg)
                 except Exception as exc:
                     sys.stderr.write(f"Failed to engage boost: {exc}\n")
         else:
