@@ -15,17 +15,17 @@ CONF = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
 BACKLIGHT_PATH = pathlib.Path('/sys/class/backlight/intel_backlight/brightness')
 DEFAULT = {
     'enabled': True,
-    'away_confirm': 5.0,
-    'away_delay': 60,
+    'away_confirm': 3.0,
+    'away_delay': 20,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': False,
+    'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
     'force_120hz_on_battery': True,
-    'oled_screen_care': False,
-    'oled_dim_inactive_sec': 0,
+    'oled_screen_care': True,
+    'oled_dim_inactive_sec': 45,
     'inhibit_on_media': True,
 }
 
@@ -48,16 +48,16 @@ def load_config() -> dict:
     try:
         out['away_delay'] = max(0, min(300, int(out['away_delay'])))
     except Exception:
-        out['away_delay'] = 10
+        out['away_delay'] = 20
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
     out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', True))
-    out['screen_off_on_away'] = bool(out.get('screen_off_on_away', False))
-    out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
+    out['screen_off_on_away'] = bool(out.get('screen_off_on_away', True))
+    out['oled_screen_care'] = bool(out.get('oled_screen_care', True))
     out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
     try:
-        out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 0))))
+        out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 45))))
     except Exception:
-        out['oled_dim_inactive_sec'] = 0
+        out['oled_dim_inactive_sec'] = 45
     return out
 
 
@@ -180,19 +180,7 @@ class PresenceController:
                     BACKLIGHT_PATH.write_text('220')
             except Exception:
                 pass
-            # Wake screensaver surface
-            try:
-                self.session.call_sync(
-                    'org.gnome.ScreenSaver',
-                    '/org/gnome/ScreenSaver',
-                    'org.gnome.ScreenSaver',
-                    'SetActive',
-                    GLib.Variant('(b)', (False,)),
-                    None, Gio.DBusCallFlags.NONE, 1000, None,
-                )
-            except Exception:
-                pass
-            # Ensure Mutter display is awake
+            # 1. Wake Mutter KMS display controller first
             try:
                 self.session.call_sync(
                     'org.gnome.Mutter.DisplayConfig',
@@ -204,7 +192,46 @@ class PresenceController:
                         'PowerSaveMode',
                         GLib.Variant('i', 0),
                     )),
+                    None, Gio.DBusCallFlags.NONE, 2000, None,
+                )
+            except Exception:
+                pass
+            # 2. Wake screensaver surface
+            try:
+                self.session.call_sync(
+                    'org.gnome.ScreenSaver',
+                    '/org/gnome/ScreenSaver',
+                    'org.gnome.ScreenSaver',
+                    'SetActive',
+                    GLib.Variant('(b)', (False,)),
                     None, Gio.DBusCallFlags.NONE, 1000, None,
+                )
+            except Exception:
+                pass
+            try:
+                self.session.call_sync(
+                    'org.gnome.ScreenSaver',
+                    '/org/gnome/ScreenSaver',
+                    'org.gnome.ScreenSaver',
+                    'WakeUpScreen',
+                    None, None, Gio.DBusCallFlags.NONE, 1000, None,
+                )
+            except Exception:
+                pass
+        else:
+            # Turn display OFF (Mutter DPMS OFF: cuts pixel power completely for OLED)
+            try:
+                self.session.call_sync(
+                    'org.gnome.Mutter.DisplayConfig',
+                    '/org/gnome/Mutter/DisplayConfig',
+                    'org.freedesktop.DBus.Properties',
+                    'Set',
+                    GLib.Variant('(ssv)', (
+                        'org.gnome.Mutter.DisplayConfig',
+                        'PowerSaveMode',
+                        GLib.Variant('i', 3),
+                    )),
+                    None, Gio.DBusCallFlags.NONE, 2000, None,
                 )
             except Exception:
                 pass
@@ -384,7 +411,7 @@ class PresenceController:
 
         # Safety check: if user was active on keyboard/touchpad, do not blank screen!
         idletime_ms = self._get_idletime_ms()
-        min_idle_ms = max(10000, int(self.cfg.get('away_delay', 10) * 1000))
+        min_idle_ms = max(5000, int(self.cfg.get('away_delay', 20) * 1000) - 2000)
         if idletime_ms < min_idle_ms:
             # User is active; postpone check
             self.timer = GLib.timeout_add(5000, self._away_fire)
