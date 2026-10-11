@@ -184,7 +184,7 @@ class FFPowerIndicator extends PanelMenu.Button {
 export default class FFPowerIndicatorExtension extends Extension {
     enable() {
         this._indicator = new FFPowerIndicator();
-        Main.panel.addToStatusArea('ff-power-indicator', this._indicator);
+        Main.panel.addToStatusArea('ff-power-indicator', this._indicator, 0, 'center');
     }
 
     disable() {

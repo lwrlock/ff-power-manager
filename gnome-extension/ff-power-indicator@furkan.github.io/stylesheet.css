@@ -50,16 +50,20 @@
     background-color: #ffffff !important;
 }
 
-/* FF Power Indicator Wattage Display */
+/* FF Power Indicator Wattage Display Capsule */
 .ff-power-label {
     font-weight: 600;
-    padding: 0 4px;
-    color: rgba(110, 230, 180, 0.85) !important;
-    background-color: transparent !important;
+    font-size: 13px;
+    padding: 3px 12px;
+    border-radius: 12px;
+    color: rgba(110, 230, 180, 0.95) !important;
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     transition-duration: 180ms;
 }
 
 .ff-power-label:hover {
     color: #6ee6b4 !important;
-    background-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.16) !important;
+    border-color: rgba(110, 230, 180, 0.3);
 }
