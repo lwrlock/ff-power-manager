@@ -16,13 +16,13 @@ STATE_FILE = RUN_DIR / 'presence.state'
 
 DEFAULT_CONFIG = {
     'battery': {
-        'gnome_profile': 'balanced',
-        'epp': 'balance_power',
-        'turbo': True,
+        'gnome_profile': 'power-saver',
+        'epp': 'power',
+        'turbo': False,
         'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
-        'pcie_aspm': 'powersave',
+        'pcie_aspm': 'powersupersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
         'hwp_dynamic_boost': 'off',

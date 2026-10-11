@@ -12,6 +12,7 @@ from gi.repository import Gio, GLib
 from .core import RUN_DIR, STATE_FILE, on_battery_from_sysfs
 
 CONF = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
+BACKLIGHT_PATH = pathlib.Path('/sys/class/backlight/intel_backlight/brightness')
 DEFAULT = {
     'enabled': True,
     'away_confirm': 5.0,
@@ -22,6 +23,7 @@ DEFAULT = {
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
+    'force_120hz_on_battery': True,
     'oled_screen_care': False,
     'oled_dim_inactive_sec': 0,
     'inhibit_on_media': True,
@@ -48,6 +50,7 @@ def load_config() -> dict:
     except Exception:
         out['away_delay'] = 10
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
+    out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', True))
     out['screen_off_on_away'] = bool(out.get('screen_off_on_away', False))
     out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
     out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
@@ -66,6 +69,7 @@ class PresenceController:
         self.last_state = None
         self.screen_off_by_fpm = False
         self.is_dimmed = False
+        self.saved_brightness = None
         self._last_checked_mode = None
         try:
             RUN_DIR.mkdir(parents=True, exist_ok=True)
@@ -166,29 +170,66 @@ class PresenceController:
             return 999999999
 
     def _set_display(self, on: bool) -> None:
-        if on and self.is_dimmed:
-            self._set_dimming(False)
-            self.is_dimmed = False
-        self.session.call_sync(
-            'org.gnome.Mutter.DisplayConfig',
-            '/org/gnome/Mutter/DisplayConfig',
-            'org.freedesktop.DBus.Properties',
-            'Set',
-            GLib.Variant('(ssv)', (
-                'org.gnome.Mutter.DisplayConfig',
-                'PowerSaveMode',
-                GLib.Variant('i', 0 if on else 3),
-            )),
-            None, Gio.DBusCallFlags.NONE, 3000, None,
-        )
+        if on:
+            if self.is_dimmed:
+                self._set_dimming(False)
+                self.is_dimmed = False
+            # Restore brightness safely
+            if self.saved_brightness is not None:
+                try:
+                    if BACKLIGHT_PATH.exists():
+                        BACKLIGHT_PATH.write_text(str(max(50, self.saved_brightness)))
+                except Exception:
+                    pass
+                self.saved_brightness = None
+            else:
+                try:
+                    if BACKLIGHT_PATH.exists() and int(BACKLIGHT_PATH.read_text().strip()) == 0:
+                        BACKLIGHT_PATH.write_text('308')
+                except Exception:
+                    pass
+            # Wake screensaver surface
+            try:
+                self.session.call_sync(
+                    'org.gnome.ScreenSaver',
+                    '/org/gnome/ScreenSaver',
+                    'org.gnome.ScreenSaver',
+                    'SetActive',
+                    GLib.Variant('(b)', (False,)),
+                    None, Gio.DBusCallFlags.NONE, 1000, None,
+                )
+            except Exception:
+                pass
+        else:
+            # Save current brightness before zeroing OLED emission
+            try:
+                if BACKLIGHT_PATH.exists():
+                    cur = int(BACKLIGHT_PATH.read_text().strip())
+                    if cur > 0:
+                        self.saved_brightness = cur
+                        BACKLIGHT_PATH.write_text('0')
+            except Exception:
+                pass
+            # Blank screen via screensaver surface
+            try:
+                self.session.call_sync(
+                    'org.gnome.ScreenSaver',
+                    '/org/gnome/ScreenSaver',
+                    'org.gnome.ScreenSaver',
+                    'SetActive',
+                    GLib.Variant('(b)', (True,)),
+                    None, Gio.DBusCallFlags.NONE, 1000, None,
+                )
+            except Exception:
+                pass
 
     def _update_refresh_rate(self, mode: str) -> None:
         if not self.cfg.get('auto_refresh_rate', True):
             return
         # Automatic refresh rate switching:
-        # - Battery: 60Hz (saves 2.5 - 3 Watts on the 2.8K OLED display)
+        # - Battery: 120Hz + VRR (dynamic 48-120Hz adaptive clocking for silky smooth 120 FPS without battery penalty)
         # - AC (Plugged in): 120Hz + VRR (full 120 FPS buttery smooth ProMotion)
-        force_120_battery = self.cfg.get('force_120hz_on_battery', False)
+        force_120_battery = self.cfg.get('force_120hz_on_battery', True)
         if mode == 'battery' and not force_120_battery:
             target_mode = '2880x1800@60.000'
         else:
@@ -390,24 +431,12 @@ class PresenceController:
                 self._set_dimming(False)
                 self.is_dimmed = False
             allowed = bool(self.cfg.get('wake_on_approach', True))
-            only_ours = bool(self.cfg.get('wake_only_if_fpm_off', False))
-            display_mode = self._get_display_power_save()
-            if allowed and (display_mode != 0 or self.screen_off_by_fpm or not only_ours):
+            if allowed:
                 try:
                     self._set_display(True)
                     self.screen_off_by_fpm = False
-                    self.session.call_sync(
-                        'org.gnome.ScreenSaver',
-                        '/org/gnome/ScreenSaver',
-                        'org.gnome.ScreenSaver',
-                        'SetActive',
-                        GLib.Variant('(b)', (False,)),
-                        None, Gio.DBusCallFlags.NONE, 1000, None
-                    )
                 except Exception:
                     pass
-            elif display_mode == 0:
-                self.screen_off_by_fpm = False
         elif state == 'absent':
             self._cancel_timer()
             confirm = float(self.cfg.get('away_confirm', 3.0))
