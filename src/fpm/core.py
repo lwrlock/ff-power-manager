@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import subprocess
+import time
 from copy import deepcopy
 
 APP_ID = 'com.ff.PowerManager'
@@ -16,16 +17,16 @@ STATE_FILE = RUN_DIR / 'presence.state'
 
 DEFAULT_CONFIG = {
     'battery': {
-        'gnome_profile': 'power-saver',
-        'epp': 'power',
-        'turbo': False,
+        'gnome_profile': 'balanced',
+        'epp': 'balance_power',
+        'turbo': True,
         'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
-        'pcie_aspm': 'powersupersave',
+        'pcie_aspm': 'powersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
-        'hwp_dynamic_boost': 'off',
+        'hwp_dynamic_boost': 'on',
     },
     'ac': {
         'gnome_profile': 'balanced',
@@ -64,7 +65,7 @@ PRESETS = {
     'battery': {
         'recommended': {
             'gnome_profile': 'balanced',
-            'epp': 'balance_performance',
+            'epp': 'balance_power',
             'turbo': True,
             'wifi_power_save': True,
             'nvme_runtime_pm': 'auto',
@@ -272,6 +273,7 @@ def set_profile(value: str) -> None:
         return
     if command_output(['/usr/bin/powerprofilesctl', 'get']) != value:
         run(['/usr/bin/powerprofilesctl', 'set', value])
+        time.sleep(0.12)
 
 
 def set_epp(value: str) -> None:
@@ -328,25 +330,11 @@ def set_wifi_ps(value: bool | str) -> None:
             run(['/usr/sbin/iw', 'dev', iface, 'set', 'power_save', want])
 
 
-def enable_pcie_l1_substates() -> None:
-    try:
-        # Downstream endpoint first, then upstream root port (PCIe Base Spec section 5.5.4)
-        subprocess.run(['/usr/bin/setpci', '-s', '02:00.0', '230.b=0f'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['/usr/bin/setpci', '-s', '00:06.2', '208.b=1f'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-
 def set_nvme(value: str) -> None:
     if value == 'system':
         return
     for p in glob.glob('/sys/class/nvme/nvme*/device/power/control'):
         write_if_changed(p, value)
-    # Enable Autonomous Power State Transition (APST) for deepest NVMe PS4 (0.005W) sleep
-    apst_node = '/sys/module/nvme_core/parameters/default_ps_max_latency_us'
-    if os.path.exists(apst_node):
-        write_if_changed(apst_node, '5500' if value == 'auto' else '0')
-    enable_pcie_l1_substates()
 
 
 def set_pci_runtime_pm(value: str = 'auto') -> None:
@@ -377,7 +365,7 @@ def set_cpu_freq_floor(mode: str | None = None) -> None:
 
         if on_bat:
             target_min = '400000'
-            target_epb = '8' if cpu_idx <= 13 else '10'
+            target_epb = '6' if cpu_idx <= 5 else '7'
         elif is_extreme:
             if cpu_idx <= 5:       # Lion Cove P-cores
                 target_min = '2200000'
@@ -436,15 +424,11 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
     for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
-            write_if_changed(power_prof, 'power_saving' if on_bat else 'base')
+            write_if_changed(power_prof, 'base')
         min_node = os.path.join(gt_freq, 'min_freq')
         if os.path.exists(min_node):
             is_gt1 = 'gt1' in gt_freq
-            if on_bat:
-                rpn_node = os.path.join(gt_freq, 'rpn_freq')
-                rpn = read_text(rpn_node)
-                target_min = rpn.strip() if rpn and rpn.strip().isdigit() else ('100' if is_gt1 else '800')
-            elif is_extreme:
+            if is_extreme:
                 target_min = '500' if is_gt1 else '1800'
             else:
                 target_min = '500' if is_gt1 else '800'
@@ -460,7 +444,7 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
     for card in glob.glob('/sys/class/drm/card*'):
         slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
         if os.path.exists(slpc_node):
-            write_if_changed(slpc_node, 'power_saving' if on_bat else 'base')
+            write_if_changed(slpc_node, 'base')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
             write_if_changed(boost_node, '2350')
@@ -469,7 +453,7 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
             rp1_node = os.path.join(card, 'gt_RP1_freq_mhz')
             rp1 = read_text(rp1_node)
             target_min = '1800' if is_extreme else (rp1 if rp1 and rp1.isdigit() else '500')
-            write_if_changed(min_node, '100' if on_bat else target_min)
+            write_if_changed(min_node, target_min)
         max_node = os.path.join(card, 'gt_max_freq_mhz')
         if os.path.exists(max_node):
             write_if_changed(max_node, '2350')
@@ -478,6 +462,8 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
 def set_pcie_aspm(value: str) -> None:
     if value == 'system':
         return
+    if value == 'powersupersave':
+        value = 'powersave'
     p = '/sys/module/pcie_aspm/parameters/policy'
     if os.path.exists(p):
         write_if_changed(p, value)
@@ -501,28 +487,11 @@ def set_audio(value: str) -> None:
         write_if_changed(p_ctrl, 'Y' if value == 'on' else 'N')
 
 
-def optimize_touchpad() -> None:
-    # On battery allow touchpad controller to enter low-power sleep, eliminating 1200+ interrupts/sec.
-    # On AC keep awake for zero-latency response.
-    target = 'auto' if on_battery_from_sysfs() else 'on'
-    for path in glob.glob('/sys/bus/i2c/devices/i2c-SYNA*/power/control'):
-        write_if_changed(path, target)
-
-
 def optimize_sd_card() -> None:
-    # If no SD card media is inserted, unbind sdhci-pci to allow root port 00:1c.0 to suspend into D3hot/cold
+    # Safely enable runtime PM for SD card controller
     sd_dev = '/sys/bus/pci/devices/0000:57:00.0'
-    if not os.path.exists(sd_dev):
-        return
-    has_card = any(os.path.exists(p) for p in glob.glob('/sys/block/mmcblk*'))
-    if not has_card and on_battery_from_sysfs():
-        try:
-            unbind = '/sys/bus/pci/drivers/sdhci-pci/unbind'
-            if os.path.exists(unbind):
-                pathlib.Path(unbind).write_text('0000:57:00.0')
-            write_if_changed(os.path.join(sd_dev, 'power/control'), 'auto')
-        except Exception:
-            pass
+    if os.path.exists(sd_dev):
+        write_if_changed(os.path.join(sd_dev, 'power/control'), 'auto')
 
 
 def apply_kernel_tunings(mode: str) -> None:
@@ -584,7 +553,6 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_usb(s['usb_autosuspend'])
     set_audio(s['audio_powersave'])
     apply_kernel_tunings(base_mode)
-    optimize_touchpad()
     optimize_sd_card()
 
 

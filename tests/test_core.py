@@ -10,7 +10,7 @@ class ConfigTests(unittest.TestCase):
             'battery': {'epp': 'not-a-real-mode', 'turbo': False},
             'ac': {'gnome_profile': 'balanced'},
         })
-        self.assertEqual(cfg['battery']['epp'], 'power')
+        self.assertEqual(cfg['battery']['epp'], 'balance_power')
         self.assertFalse(cfg['battery']['turbo'])
         self.assertEqual(cfg['ac']['gnome_profile'], 'balanced')
 

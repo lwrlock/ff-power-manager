@@ -16,10 +16,10 @@ BACKLIGHT_PATH = pathlib.Path('/sys/class/backlight/intel_backlight/brightness')
 DEFAULT = {
     'enabled': True,
     'away_confirm': 5.0,
-    'away_delay': 45,
+    'away_delay': 60,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': True,
+    'screen_off_on_away': False,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
@@ -174,20 +174,12 @@ class PresenceController:
             if self.is_dimmed:
                 self._set_dimming(False)
                 self.is_dimmed = False
-            # Restore brightness safely
-            if self.saved_brightness is not None:
-                try:
-                    if BACKLIGHT_PATH.exists():
-                        BACKLIGHT_PATH.write_text(str(max(50, self.saved_brightness)))
-                except Exception:
-                    pass
-                self.saved_brightness = None
-            else:
-                try:
-                    if BACKLIGHT_PATH.exists() and int(BACKLIGHT_PATH.read_text().strip()) == 0:
-                        BACKLIGHT_PATH.write_text('308')
-                except Exception:
-                    pass
+            # Ensure backlight is never stuck at 0
+            try:
+                if BACKLIGHT_PATH.exists() and int(BACKLIGHT_PATH.read_text().strip()) == 0:
+                    BACKLIGHT_PATH.write_text('220')
+            except Exception:
+                pass
             # Wake screensaver surface
             try:
                 self.session.call_sync(
@@ -200,24 +192,18 @@ class PresenceController:
                 )
             except Exception:
                 pass
-        else:
-            # Save current brightness before zeroing OLED emission
-            try:
-                if BACKLIGHT_PATH.exists():
-                    cur = int(BACKLIGHT_PATH.read_text().strip())
-                    if cur > 0:
-                        self.saved_brightness = cur
-                        BACKLIGHT_PATH.write_text('0')
-            except Exception:
-                pass
-            # Blank screen via screensaver surface
+            # Ensure Mutter display is awake
             try:
                 self.session.call_sync(
-                    'org.gnome.ScreenSaver',
-                    '/org/gnome/ScreenSaver',
-                    'org.gnome.ScreenSaver',
-                    'SetActive',
-                    GLib.Variant('(b)', (True,)),
+                    'org.gnome.Mutter.DisplayConfig',
+                    '/org/gnome/Mutter/DisplayConfig',
+                    'org.freedesktop.DBus.Properties',
+                    'Set',
+                    GLib.Variant('(ssv)', (
+                        'org.gnome.Mutter.DisplayConfig',
+                        'PowerSaveMode',
+                        GLib.Variant('i', 0),
+                    )),
                     None, Gio.DBusCallFlags.NONE, 1000, None,
                 )
             except Exception:
