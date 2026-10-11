@@ -137,17 +137,22 @@ class FFPowerIndicator extends PanelMenu.Button {
                    readFile('/sys/class/power_supply/AC/online');
         let onAc = (acad === '1');
 
+        let timeNow = '';
+        try {
+            timeNow = GLib.DateTime.new_now_local().format('%H:%M') + '  |  ';
+        } catch (_) {}
+
         if (onAc) {
             if (watts > 1.0) {
-                this._label.text = `🔌 ${watts.toFixed(1)} W (${capStr}%)`;
+                this._label.text = `${timeNow}${watts.toFixed(1)}W • %${capStr} AC`;
             } else {
-                this._label.text = `🔌 AC (${capStr}%)`;
+                this._label.text = `${timeNow}%${capStr} AC`;
             }
         } else {
             if (watts > 0.0) {
-                this._label.text = `⚡ ${watts.toFixed(1)} W (${capStr}%)`;
+                this._label.text = `${timeNow}${watts.toFixed(1)}W • %${capStr}`;
             } else {
-                this._label.text = `⚡ ${capStr}%`;
+                this._label.text = `${timeNow}%${capStr}`;
             }
         }
 
