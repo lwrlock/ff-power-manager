@@ -24,6 +24,7 @@ DEFAULT = {
     'promotion_120hz': True,
     'oled_screen_care': False,
     'oled_dim_inactive_sec': 0,
+    'inhibit_on_media': True,
 }
 
 
@@ -49,6 +50,7 @@ def load_config() -> dict:
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
     out['screen_off_on_away'] = bool(out.get('screen_off_on_away', False))
     out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
+    out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
     try:
         out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 0))))
     except Exception:
@@ -263,6 +265,87 @@ class PresenceController:
             GLib.source_remove(self.timer)
             self.timer = 0
 
+    def _is_media_active(self) -> bool:
+        # 1. Active media players via MPRIS (browsers, VLC, mpv, spotify, etc.)
+        try:
+            res = self.session.call_sync(
+                'org.freedesktop.DBus',
+                '/org/freedesktop/DBus',
+                'org.freedesktop.DBus',
+                'ListNames',
+                None, None, Gio.DBusCallFlags.NONE, 500, None
+            )
+            names = [n for n in res.unpack()[0] if n.startswith('org.mpris.MediaPlayer2.')]
+            for name in names:
+                try:
+                    prop = self.session.call_sync(
+                        name,
+                        '/org/mpris/MediaPlayer2',
+                        'org.freedesktop.DBus.Properties',
+                        'Get',
+                        GLib.Variant('(ss)', ('org.mpris.MediaPlayer2.Player', 'PlaybackStatus')),
+                        None, Gio.DBusCallFlags.NONE, 500, None
+                    )
+                    if prop.unpack()[0] == 'Playing':
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 2. GNOME SessionManager inhibitors (video / presentation / streaming)
+        try:
+            res = self.session.call_sync(
+                'org.gnome.SessionManager',
+                '/org/gnome/SessionManager',
+                'org.gnome.SessionManager',
+                'GetInhibitors',
+                None, None, Gio.DBusCallFlags.NONE, 500, None
+            )
+            for p in res.unpack()[0]:
+                try:
+                    flags = self.session.call_sync(
+                        'org.gnome.SessionManager', p,
+                        'org.gnome.SessionManager.Inhibitor', 'GetFlags',
+                        None, None, Gio.DBusCallFlags.NONE, 500, None
+                    ).unpack()[0]
+                    if not (flags & 8):
+                        continue
+                    app = self.session.call_sync(
+                        'org.gnome.SessionManager', p,
+                        'org.gnome.SessionManager.Inhibitor', 'GetAppId',
+                        None, None, Gio.DBusCallFlags.NONE, 500, None
+                    ).unpack()[0]
+                    reason = self.session.call_sync(
+                        'org.gnome.SessionManager', p,
+                        'org.gnome.SessionManager.Inhibitor', 'GetReason',
+                        None, None, Gio.DBusCallFlags.NONE, 500, None
+                    ).unpack()[0]
+                    app_lower = app.lower()
+                    reason_lower = reason.lower()
+                    if 'antigravity' in app_lower or reason_lower == 'electron':
+                        continue
+                    keywords = ('video', 'audio', 'media', 'play', 'movie', 'stream', 'webrtc', 'presentation', 'fullscreen', 'game')
+                    if any(kw in reason_lower for kw in keywords):
+                        return True
+                    known_media_apps = ('vlc', 'mpv', 'totem', 'celluloid', 'clapper', 'kodi', 'firefox', 'chrome', 'brave', 'chromium')
+                    if any(k in app_lower for k in known_media_apps):
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 3. Active audio sink output check (PipeWire / PulseAudio)
+        try:
+            p = subprocess.run(['pactl', 'list', 'sinks', 'short'], capture_output=True, text=True, timeout=0.5)
+            if 'RUNNING' in p.stdout:
+                return True
+        except Exception:
+            pass
+
+        return False
+
     def _away_fire(self) -> bool:
         self.timer = 0
         try:
@@ -278,6 +361,11 @@ class PresenceController:
         if idletime_ms < min_idle_ms:
             # User is active; postpone check
             self.timer = GLib.timeout_add(5000, self._away_fire)
+            return GLib.SOURCE_REMOVE
+
+        # Safety check: if media / video / presentation playback is active, do not turn off screen!
+        if self.cfg.get('inhibit_on_media', True) and self._is_media_active():
+            self.timer = GLib.timeout_add(10000, self._away_fire)
             return GLib.SOURCE_REMOVE
 
         if self.cfg.get('lock_on_away'):

@@ -42,6 +42,7 @@ DEFAULT_PRESENCE = {
     'promotion_120hz': True,
     'oled_screen_care': False,
     'oled_dim_inactive_sec': 0,
+    'inhibit_on_media': True,
 }
 
 CUSTOM_CSS = b"""
@@ -562,6 +563,7 @@ class MainWindow(Adw.ApplicationWindow):
         for key, title, sub, defval in [
             ('wake_on_approach', 'Instant Wake on Approach', 'Powers up the OLED panel the instant you approach your desk.', True),
             ('screen_off_on_away', 'Turn Screen Off on Departure', 'Powers down pixels when you step beyond 1.2m to maximize battery.', True),
+            ('inhibit_on_media', 'Inhibit Screen Off During Media Playback', 'Prevents screen-off while watching videos, movies or listening to media.', True),
             ('lock_on_away', 'Lock Session on Departure', 'Secures the GNOME desktop session immediately upon departure.', False),
         ]:
             sw = Adw.SwitchRow(title=title, subtitle=sub)

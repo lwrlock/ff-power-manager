@@ -143,6 +143,46 @@ class ConfigTests(unittest.TestCase):
         detected = auto_boost.find_heavy_process()
         self.assertEqual(detected, 'cyberpunk2077.e')
 
+    def test_presence_config_includes_media_inhibit(self):
+        from fpm import presence
+        cfg = presence.load_config()
+        self.assertIn('inhibit_on_media', cfg)
+        self.assertTrue(cfg['inhibit_on_media'])
+
+    def test_presence_is_media_active_detection(self):
+        from fpm import presence
+        with mock.patch('gi.repository.Gio.bus_get_sync') as mock_bus_sync, \
+             mock.patch('gi.repository.Gio.File.new_for_path'), \
+             mock.patch('pathlib.Path.read_text', return_value='present'):
+            mock_session = mock.MagicMock()
+            mock_bus_sync.return_value = mock_session
+
+            # Create dummy PresenceController
+            with mock.patch.object(presence.PresenceController, '_fs_changed'), \
+                 mock.patch.object(presence.PresenceController, '_set_dimming'), \
+                 mock.patch.object(presence.PresenceController, '_read_state'), \
+                 mock.patch.object(presence.PresenceController, '_read_power_mode_once'), \
+                 mock.patch('gi.repository.GLib.timeout_add_seconds'):
+                ctrl = presence.PresenceController()
+
+            # Test 1: Active MPRIS player returns True
+            mock_list = mock.MagicMock()
+            mock_list.unpack.return_value = (['org.mpris.MediaPlayer2.vlc'],)
+            mock_prop = mock.MagicMock()
+            mock_prop.unpack.return_value = ('Playing',)
+            mock_session.call_sync.side_effect = [mock_list, mock_prop]
+
+            self.assertTrue(ctrl._is_media_active())
+
+            # Test 2: Inactive MPRIS and no inhibitors returns False
+            mock_list.unpack.return_value = ()
+            mock_session.call_sync.side_effect = [
+                mock_list, # ListNames
+                mock.MagicMock(unpack=lambda: ([],)), # GetInhibitors
+            ]
+            with mock.patch('subprocess.run', return_value=mock.MagicMock(stdout='SUSPENDED')):
+                self.assertFalse(ctrl._is_media_active())
+
 
 if __name__ == '__main__':
     unittest.main()
