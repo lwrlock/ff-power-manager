@@ -33,10 +33,10 @@ TELEMETRY_FILE = pathlib.Path('/run/ff-power-manager/sensor_telemetry.json')
 DEFAULT_PRESENCE = {
     'enabled': True,
     'away_confirm': 5.0,
-    'away_delay': 60,
+    'away_delay': 45,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': False,
+    'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,

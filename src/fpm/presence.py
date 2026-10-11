@@ -15,10 +15,10 @@ CONF = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
 DEFAULT = {
     'enabled': True,
     'away_confirm': 5.0,
-    'away_delay': 60,
+    'away_delay': 45,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': False,
+    'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
@@ -308,6 +308,14 @@ class PresenceController:
                 try:
                     self._set_display(True)
                     self.screen_off_by_fpm = False
+                    self.session.call_sync(
+                        'org.gnome.ScreenSaver',
+                        '/org/gnome/ScreenSaver',
+                        'org.gnome.ScreenSaver',
+                        'SetActive',
+                        GLib.Variant('(b)', (False,)),
+                        None, Gio.DBusCallFlags.NONE, 1000, None
+                    )
                 except Exception:
                     pass
             elif display_mode == 0:
