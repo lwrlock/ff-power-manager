@@ -24,23 +24,30 @@ function getActiveMediaInfo() {
     try {
         const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
         const res = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'ListNames', null, null, Gio.DBusCallFlags.NONE, 200, null);
-        const names = res.unpack()[0].filter(n => n.startsWith('org.mpris.MediaPlayer2.'));
+        const names = res.get_child_value(0).deepUnpack().filter(n => n.startsWith('org.mpris.MediaPlayer2.'));
+        let pausedCandidate = null;
         for (const name of names) {
             try {
-                const statusRes = bus.call_sync(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get', GLib.Variant('(ss)', ['org.mpris.MediaPlayer2.Player', 'PlaybackStatus']), null, Gio.DBusCallFlags.NONE, 200, null);
-                const status = statusRes.unpack()[0];
-                if (status === 'Playing') {
-                    const metaRes = bus.call_sync(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get', GLib.Variant('(ss)', ['org.mpris.MediaPlayer2.Player', 'Metadata']), null, Gio.DBusCallFlags.NONE, 200, null);
-                    const meta = metaRes.unpack()[0];
-                    const title = meta['xesam:title']?.unpack ? meta['xesam:title'].unpack() : (meta['xesam:title'] || '');
-                    const artistVal = meta['xesam:artist']?.unpack ? meta['xesam:artist'].unpack() : (meta['xesam:artist'] || '');
-                    const artist = Array.isArray(artistVal) ? artistVal.join(', ') : String(artistVal || '');
-                    if (title) {
-                        return { name, status, title: String(title).trim(), artist: String(artist).trim() };
-                    }
+                const statusRes = bus.call_sync(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get', new GLib.Variant('(ss)', ['org.mpris.MediaPlayer2.Player', 'PlaybackStatus']), null, Gio.DBusCallFlags.NONE, 200, null);
+                const status = statusRes.get_child_value(0).get_variant().deepUnpack();
+                const metaRes = bus.call_sync(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get', new GLib.Variant('(ss)', ['org.mpris.MediaPlayer2.Player', 'Metadata']), null, Gio.DBusCallFlags.NONE, 200, null);
+                const dict = metaRes.get_child_value(0).get_variant();
+                const titleV = dict.lookup_value('xesam:title', null);
+                const artistV = dict.lookup_value('xesam:artist', null);
+                let title = titleV ? String(titleV.deepUnpack()) : '';
+                let artist = '';
+                if (artistV) {
+                    const aVal = artistV.deepUnpack();
+                    artist = Array.isArray(aVal) ? aVal.join(', ') : String(aVal || '');
+                }
+                if (title) {
+                    const info = { bus, name, status, title: title.trim(), artist: artist.trim() };
+                    if (status === 'Playing') return info;
+                    if (!pausedCandidate) pausedCandidate = info;
                 }
             } catch (_) {}
         }
+        return pausedCandidate;
     } catch (_) {}
     return null;
 }
