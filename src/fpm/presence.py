@@ -22,8 +22,8 @@ DEFAULT = {
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
-    'oled_screen_care': True,
-    'oled_dim_inactive_sec': 45,
+    'oled_screen_care': False,
+    'oled_dim_inactive_sec': 0,
 }
 
 
@@ -47,10 +47,12 @@ def load_config() -> dict:
     except Exception:
         out['away_delay'] = 10
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
+    out['screen_off_on_away'] = bool(out.get('screen_off_on_away', False))
+    out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
     try:
-        out['oled_dim_inactive_sec'] = max(15, min(300, int(out.get('oled_dim_inactive_sec', 45))))
+        out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 0))))
     except Exception:
-        out['oled_dim_inactive_sec'] = 45
+        out['oled_dim_inactive_sec'] = 0
     return out
 
 
@@ -62,6 +64,7 @@ class PresenceController:
         self.last_state = None
         self.screen_off_by_fpm = False
         self.is_dimmed = False
+        self._last_checked_mode = None
         try:
             RUN_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -82,23 +85,42 @@ class PresenceController:
             )
         except Exception:
             self.sys_bus = None
+        self._set_dimming(False)
         self._read_state()
         self._read_power_mode_once()
         GLib.timeout_add_seconds(3, self._periodic_power_check)
 
     def _periodic_power_check(self) -> bool:
         self.cfg = load_config()
-        self._read_power_mode_once()
-        if self.cfg.get('oled_screen_care', True):
-            idletime_ms = self._get_idletime_ms()
-            dim_ms = int(self.cfg.get('oled_dim_inactive_sec', 45) * 1000)
-            disp_mode = self._get_display_power_save()
-            if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
-                self._set_dimming(True)
-                self.is_dimmed = True
-            elif self.is_dimmed and idletime_ms < 2500:
+        mode = 'battery' if on_battery_from_sysfs() else 'ac'
+        p = RUN_DIR / 'power.mode'
+        if p.exists():
+            try:
+                txt = p.read_text().strip()
+                if txt in ('battery', 'ac'):
+                    mode = txt
+            except Exception:
+                pass
+        if self._last_checked_mode != mode:
+            self._last_checked_mode = mode
+            self._update_refresh_rate(mode)
+
+        if not self.cfg.get('oled_screen_care', False):
+            if self.is_dimmed:
                 self._set_dimming(False)
                 self.is_dimmed = False
+        else:
+            idletime_ms = self._get_idletime_ms()
+            dim_sec = int(self.cfg.get('oled_dim_inactive_sec', 0))
+            if dim_sec > 0:
+                dim_ms = dim_sec * 1000
+                disp_mode = self._get_display_power_save()
+                if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
+                    self._set_dimming(True)
+                    self.is_dimmed = True
+                elif self.is_dimmed and idletime_ms < 2500:
+                    self._set_dimming(False)
+                    self.is_dimmed = False
         return GLib.SOURCE_CONTINUE
 
     def _set_dimming(self, dim: bool) -> None:
@@ -276,6 +298,9 @@ class PresenceController:
 
         if state == 'present':
             self._cancel_timer()
+            if self.is_dimmed:
+                self._set_dimming(False)
+                self.is_dimmed = False
             allowed = bool(self.cfg.get('wake_on_approach', True))
             only_ours = bool(self.cfg.get('wake_only_if_fpm_off', False))
             display_mode = self._get_display_power_save()
