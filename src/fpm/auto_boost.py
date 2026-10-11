@@ -167,7 +167,8 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
                         except Exception as exc:
                             sys.stderr.write(f"Background AC floor tuning failed: {exc}\n")
 
-        time.sleep(poll_interval)
+        sleep_time = 6.0 if on_battery_from_sysfs() else poll_interval
+        time.sleep(sleep_time)
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine stopped.\n")
 
