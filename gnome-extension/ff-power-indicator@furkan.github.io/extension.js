@@ -120,7 +120,7 @@ class FFPowerIndicator extends PanelMenu.Button {
         this._mediaSection.addMenuItem(this._mediaItem);
 
         let mediaControlsBox = new PopupMenu.PopupBaseMenuItem({reactive: true});
-        let cBox = new St.BoxLayout({spacing: 10, x_expand: true});
+        let cBox = new St.BoxLayout({x_expand: true, style: 'spacing: 10px;'});
         let btnPrev = new St.Button({label: 'Önceki', style_class: 'mediamac-btn'});
         btnPrev.connect('clicked', () => this._sendMediaCmd('Previous'));
         let btnPlay = new St.Button({label: 'Oynat / Duraklat', style_class: 'mediamac-btn'});
