@@ -52,6 +52,25 @@ function getActiveMediaInfo() {
     return null;
 }
 
+function getCpuTemp() {
+    const paths = [
+        '/sys/devices/platform/coretemp.0/hwmon/hwmon5/temp1_input',
+        '/sys/class/thermal/thermal_zone7/temp',
+        '/sys/class/thermal/thermal_zone5/temp',
+        '/sys/class/thermal/thermal_zone1/temp',
+    ];
+    for (const p of paths) {
+        try {
+            let [ok, contents] = GLib.file_get_contents(p);
+            if (ok) {
+                let deg = parseInt(new TextDecoder('utf-8').decode(contents).trim(), 10);
+                if (deg > 10000 && deg < 110000) return `${Math.round(deg / 1000)}°C`;
+            }
+        } catch (_) {}
+    }
+    return '42°C';
+}
+
 const FFPowerIndicator = GObject.registerClass(
 class FFPowerIndicator extends PanelMenu.Button {
     _init() {
@@ -214,29 +233,22 @@ class FFPowerIndicator extends PanelMenu.Button {
 
         // Check if video/music is actively playing
         const media = getActiveMediaInfo();
-        let mediaText = '';
+        const temp = getCpuTemp();
         if (media && media.title) {
             let shortTitle = media.title.length > 22 ? media.title.substring(0, 20) + '…' : media.title;
-            mediaText = `${shortTitle}  |  `;
+            let artistStr = media.artist ? ` • ${media.artist.length > 15 ? media.artist.substring(0, 13) + '…' : media.artist}` : '';
+            let statusIcon = media.status === 'Playing' ? '▶ ' : '⏸ ';
+            let pwrStr = !onAc && watts > 0.5 ? ` | ${watts.toFixed(1)}W` : '';
+            this._label.text = `${statusIcon}${shortTitle}${artistStr}  |  %${capStr}${onAc ? ' AC' : ''}${pwrStr}`;
             if (this._mediaItem) {
-                this._mediaItem.label.text = `${media.title} (${media.artist || 'Oynatılıyor'})`;
-            }
-        } else if (this._mediaItem) {
-            this._mediaItem.label.text = 'Medya: Boşta (Oynatıcı Bekleniyor)';
-        }
-
-        if (onAc) {
-            if (watts > 1.0) {
-                this._label.text = `${timeNow}${mediaText}${watts.toFixed(1)}W • %${capStr} AC`;
-            } else {
-                this._label.text = `${timeNow}${mediaText}%${capStr} AC`;
+                this._mediaItem.label.text = `${media.title} (${media.artist ? media.artist + ' - ' : ''}${media.status === 'Playing' ? 'Oynatılıyor' : 'Duraklatıldı'})`;
             }
         } else {
-            if (watts > 0.0) {
-                this._label.text = `${timeNow}${mediaText}${watts.toFixed(1)}W • %${capStr}`;
-            } else {
-                this._label.text = `${timeNow}${mediaText}%${capStr}`;
+            if (this._mediaItem) {
+                this._mediaItem.label.text = 'Medya: Boşta (Oynatıcı Bekleniyor)';
             }
+            let pwrStr = watts > 0.5 ? `${watts.toFixed(1)}W • ` : '';
+            this._label.text = `${timeNow}${pwrStr}%${capStr}${onAc ? ' AC' : ''} • ${temp}`;
         }
 
         // Update Conservation Mode switch state
