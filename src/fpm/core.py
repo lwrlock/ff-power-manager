@@ -511,8 +511,29 @@ def apply_kernel_tunings(mode: str) -> None:
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
-    # Always keep VFS cache pressure optimized for snappy desktop responsiveness
-    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '50')
+    # Aggressive VFS cache pressure to ensure high available RAM
+    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '200')
+
+
+def set_rapl_limits(mode: str) -> None:
+    # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits
+    if mode in ('extreme_performance', 'performance'):
+        pl1, pl2 = 65000000, 100000000
+    elif mode == 'battery' or mode in ('max_battery', 'maximum_battery'):
+        pl1, pl2 = 20000000, 35000000
+    elif mode == 'cool_quiet':
+        pl1, pl2 = 25000000, 40000000
+    else:  # ac / balanced optimum
+        pl1, pl2 = 35000000, 55000000
+
+    rapl_base = pathlib.Path('/sys/class/powercap/intel-rapl')
+    for d in rapl_base.glob('intel-rapl:*'):
+        c0 = d / 'constraint_0_power_limit_uw'
+        c1 = d / 'constraint_1_power_limit_uw'
+        if c0.exists():
+            write_if_changed(c0, str(pl1))
+        if c1.exists():
+            write_if_changed(c1, str(pl2))
 
 
 def apply(mode: str, cfg: dict | None = None) -> None:
@@ -553,6 +574,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_usb(s['usb_autosuspend'])
     set_audio(s['audio_powersave'])
     apply_kernel_tunings(base_mode)
+    set_rapl_limits(mode)
     optimize_sd_card()
 
 
