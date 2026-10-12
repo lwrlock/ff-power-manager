@@ -174,6 +174,21 @@ def main(argv: list[str] | None = None) -> int:
         elif subaction == "stop":
             return subprocess.run(['/usr/bin/systemctl', 'stop', 'ff-power-autoboost.service']).returncode
         return 0
+    elif action == "drop-caches":
+        try:
+            subprocess.run(['/usr/bin/sync'], check=False)
+            with open('/proc/sys/vm/drop_caches', 'w') as f:
+                f.write('3\n')
+            try:
+                with open('/proc/sys/vm/compact_memory', 'w') as f:
+                    f.write('1\n')
+            except Exception:
+                pass
+            sys.stdout.write("Memory caches dropped successfully.\n")
+            return 0
+        except Exception as e:
+            sys.stderr.write(f"Failed to drop caches: {e}\n")
+            return 1
     else:
         sys.stderr.write(f"Unknown action: {action}\n")
         return 2
