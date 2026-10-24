@@ -153,13 +153,13 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     _applyOledPixelShift() {
-        this._oledStep++;
-        const dx = OLED_OFFSETS_X[this._oledStep % OLED_OFFSETS_X.length];
-        const dy = OLED_OFFSETS_Y[Math.floor(this._oledStep / OLED_OFFSETS_X.length) % OLED_OFFSETS_Y.length];
-        for (const box of this._panelBoxes) {
-            try {
-                box.set_translation(dx, dy, 0);
-            } catch (_) {}
+        /* Disabled odd-pixel translation to prevent 200% HiDPI subpixel text blur on OLED */
+        if (this._panelBoxes) {
+            for (const box of this._panelBoxes) {
+                try {
+                    box.set_translation(0, 0, 0);
+                } catch (_) {}
+            }
         }
     }
 
