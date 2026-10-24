@@ -412,11 +412,12 @@ def set_macbook_hybrid_topology(mode: str | None = None) -> None:
         p_max, e_max, lpe_max = '3600000', '3200000', '2400000'
     else:
         # Balanced mode: All 16 cores available (6 P-cores + 8 E-cores + 2 LP-E cores)
-        # Idle cores sleep in hardware C10 (0W), eliminating video stutter without increasing battery draw!
+        # Idle cores sleep in hardware C10 (0W).
+        # Frequency caps at 3.4GHz (bat) / 4.0GHz (AC) prevent exponential power spikes during video playback!
         online_cores = set(range(16))
-        p_max = '4400000' if on_bat else '4800000'
-        e_max = '3400000' if on_bat else '3800000'
-        lpe_max = '2400000' if on_bat else '2500000'
+        p_max = '3400000' if on_bat else '4000000'
+        e_max = '2800000' if on_bat else '3200000'
+        lpe_max = '2000000' if on_bat else '2200000'
 
     # Ensure online cores are brought up and parked cores are put into deep offline sleep
     for c in range(1, 16):
@@ -496,8 +497,12 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
             rp0 = read_text(rp0_node)
             if is_extreme:
                 target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else ('1300' if is_gt1 else '2350')
+            elif is_max_bat:
+                target_max = '800' if is_gt1 else '800'
             else:
-                target_max = '1100' if is_gt1 else ('1600' if on_bat else '2000')
+                # Balanced mode: 3D GPU (gt0) capped at 1000 MHz (AC) / 800 MHz (battery); Media Engine (gt1) at 900 MHz.
+                # Easily scales 4K 60fps video while keeping GPU power under ~1.5W instead of 6-7W at 2000MHz!
+                target_max = '900' if is_gt1 else ('800' if on_bat else '1000')
             write_if_changed(max_node, target_max)
 
     # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6 legacy i915 nodes)
@@ -507,14 +512,14 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
             write_if_changed(slpc_node, 'power_saving' if is_max_bat else 'base')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
-            write_if_changed(boost_node, '2350' if is_extreme else '1600')
+            write_if_changed(boost_node, '2350' if is_extreme else '1200')
         min_node = os.path.join(card, 'gt_min_freq_mhz')
         if os.path.exists(min_node):
             target_min = '1400' if is_extreme else ('200' if is_max_bat else '400')
             write_if_changed(min_node, target_min)
         max_node = os.path.join(card, 'gt_max_freq_mhz')
         if os.path.exists(max_node):
-            write_if_changed(max_node, '2350' if is_extreme else '1800')
+            write_if_changed(max_node, '2350' if is_extreme else ('800' if is_max_bat else ('800' if on_bat else '1000')))
 
 
 def set_pcie_aspm(value: str) -> None:
