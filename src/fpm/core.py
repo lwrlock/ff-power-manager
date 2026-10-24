@@ -406,18 +406,19 @@ def set_macbook_hybrid_topology(mode: str | None = None) -> None:
     # MacBook Hybrid Mode (Battery, Cool & Quiet, and Default Balanced AC)
     if is_max_bat:
         online_cores = {0, 6, 7, 8, 9, 14, 15}
-        p_max, e_max, lpe_max = '2600000', '2600000', '2000000'
+        p_max, e_max, lpe_max = '2400000', '2200000', '1800000'
     elif mode == 'cool_quiet':
         online_cores = {0, 1, 6, 7, 8, 9, 14, 15}
-        p_max, e_max, lpe_max = '3600000', '3200000', '2400000'
+        p_max, e_max, lpe_max = '3200000', '2600000', '2000000'
+    elif on_bat:
+        # On Battery: MacBook Hybrid 8/16 Active (2 P-cores + 4 E-cores + 2 LP-E cores)
+        # 8 cores parked in deep sleep, dropping idle power to 3-4W!
+        online_cores = {0, 1, 6, 7, 8, 9, 14, 15}
+        p_max, e_max, lpe_max = '3400000', '2800000', '2000000'
     else:
-        # Balanced mode: All 16 cores available (6 P-cores + 8 E-cores + 2 LP-E cores)
-        # Idle cores sleep in hardware C10 (0W).
-        # Frequency caps at 3.4GHz (bat) / 4.0GHz (AC) prevent exponential power spikes during video playback!
+        # On AC: All 16 cores available
         online_cores = set(range(16))
-        p_max = '3400000' if on_bat else '4000000'
-        e_max = '2800000' if on_bat else '3200000'
-        lpe_max = '2000000' if on_bat else '2200000'
+        p_max, e_max, lpe_max = '4000000', '3200000', '2200000'
 
     # Ensure online cores are brought up and parked cores are put into deep offline sleep
     for c in range(1, 16):
@@ -427,35 +428,30 @@ def set_macbook_hybrid_topology(mode: str | None = None) -> None:
 
     for c in sorted(online_cores):
         cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+        write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
         if c <= 5:
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
             if is_max_bat:
                 p_epp, p_epb = 'power', '15'
             elif mode == 'cool_quiet':
                 p_epp, p_epb = 'balance_power', '10'
             else:
-                # Snappy single-thread app launch & JS responsiveness while resting at 400MHz C10 in idle
                 p_epp = 'balance_power' if on_bat else 'balance_performance'
-                p_epb = '8' if on_bat else '6'
+                p_epb = '10' if on_bat else '6'
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', p_epb)
         elif c <= 13:
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else 'balance_power')
-            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('8' if on_bat else '6'))
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('10' if on_bat else '6'))
         else:
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', lpe_max)
             if is_max_bat:
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
                 write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
                 write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
             else:
-                # 600 MHz min freq and balance_power ensures audio/video timers and PipeWire never glitch
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '600000')
                 write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '8' if on_bat else '6')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '10' if on_bat else '6')
 
 
 def set_cpu_freq_floor(mode: str | None = None) -> None:
@@ -484,11 +480,9 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
         if os.path.exists(min_node):
             if is_extreme:
                 target_min = '500' if is_gt1 else '1400'
-            elif is_max_bat:
+            elif on_bat or is_max_bat:
                 target_min = '100' if is_gt1 else '400'
             else:
-                # Balanced mode: 450 MHz on Media Engine (gt1) prevents dropped frames in 1080p/4K video playback.
-                # Hardware RC6 still drops act_freq to 0 MHz (0W) when no video is playing!
                 target_min = '450' if is_gt1 else '400'
             write_if_changed(min_node, target_min)
         max_node = os.path.join(gt_freq, 'max_freq')
@@ -590,10 +584,8 @@ def set_rapl_limits(mode: str) -> None:
     # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits (MacBook-style cool & responsive)
     if mode in ('extreme_performance', 'performance'):
         pl1, pl2 = 65000000, 100000000
-    elif mode in ('max_battery', 'maximum_battery'):
+    elif mode in ('battery', 'max_battery', 'maximum_battery'):
         pl1, pl2 = 12000000, 20000000
-    elif mode == 'battery':
-        pl1, pl2 = 18000000, 30000000
     elif mode == 'cool_quiet':
         pl1, pl2 = 18000000, 30000000
     else:  # ac / balanced optimum (MacBook style: quiet, 35-40°C idle, instant 45W burst)
