@@ -23,7 +23,7 @@ DEFAULT = {
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
-    'force_120hz_on_battery': True,
+    'force_120hz_on_battery': False,
     'oled_screen_care': True,
     'oled_dim_inactive_sec': 45,
     'inhibit_on_media': True,
@@ -50,7 +50,7 @@ def load_config() -> dict:
     except Exception:
         out['away_delay'] = 20
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
-    out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', True))
+    out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', False))
     out['screen_off_on_away'] = bool(out.get('screen_off_on_away', True))
     out['oled_screen_care'] = bool(out.get('oled_screen_care', True))
     out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
@@ -246,7 +246,7 @@ class PresenceController:
     def _update_refresh_rate(self, mode: str) -> None:
         if not self.cfg.get('auto_refresh_rate', True):
             return
-        force_120_battery = self.cfg.get('force_120hz_on_battery', True)
+        force_120_battery = self.cfg.get('force_120hz_on_battery', False)
         want_60hz = (mode in ('max_battery', 'maximum_battery')) or (mode == 'battery' and not force_120_battery)
 
         try:
