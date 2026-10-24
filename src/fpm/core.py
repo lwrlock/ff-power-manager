@@ -534,8 +534,16 @@ def set_pcie_aspm(value: str) -> None:
 def set_usb(value: str) -> None:
     if value != 'auto':
         return
-    for p in glob.glob('/sys/bus/usb/devices/*/power/control'):
-        write_if_changed(p, 'auto')
+    for dev_path in glob.glob('/sys/bus/usb/devices/*'):
+        p = os.path.join(dev_path, 'power/control')
+        if not os.path.exists(p):
+            continue
+        vendor = read_text(os.path.join(dev_path, 'idVendor'))
+        # Intel Bluetooth (8087) must NEVER be autosuspended, otherwise firmware drops off USB bus
+        if vendor == '8087':
+            write_if_changed(p, 'on')
+        else:
+            write_if_changed(p, 'auto')
 
 
 def set_audio(value: str) -> None:
