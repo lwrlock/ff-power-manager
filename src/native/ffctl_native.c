@@ -435,7 +435,7 @@ static void print_status(void) {
         printf("  Active Draw           : %.2f W (Package Temp: %d°C)\n", watts, temp_c);
     }
     printf("  CPU Hybrid Topology   : %s (%s • %.1f GHz Burst)\n",
-           strcmp(online_cores, "0-15") == 0 ? "16/16 All-Core Performance" : "MacBook Hybrid 8/16 Active",
+           strcmp(online_cores, "0-15") == 0 ? "16/16 All-Core Active" : "MacBook Hybrid Active",
            online_cores, p_max_ghz);
     printf("  Display Refresh Rate  : %s\n", refresh);
     printf("  CPU EPP Policy        : %s\n", epp);

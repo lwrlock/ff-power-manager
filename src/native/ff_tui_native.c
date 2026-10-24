@@ -654,7 +654,7 @@ static void draw_tab_overview(int width) {
     print_box_line(width, "%sPROCESSOR & HARDWARE TUNING%s", C_CYAN ESC_BOLD, ESC_RESET);
     print_box_line(width, "Hybrid Core Topology  : %s%-15s%s Package Temp      : %s%d°C%s (%.1f GHz Burst)",
                    strcmp(online_cores, "0-15") == 0 ? C_YELLOW : C_GREEN,
-                   strcmp(online_cores, "0-15") == 0 ? "16/16 Active" : "8/16 MacBook",
+                   strcmp(online_cores, "0-15") == 0 ? "16/16 Active" : "Hybrid Active",
                    ESC_RESET,
                    temp_c < 50 ? C_GREEN : C_YELLOW, temp_c, ESC_RESET, p_max_ghz);
     print_box_line(width, "CPU Energy Bias (EPP) : %-15s Intel Turbo Boost : %s", epp, turbo_str);

@@ -214,7 +214,7 @@ class FFPowerIndicator extends PanelMenu.Button {
         pQuiet.connect('activate', () => this._runCmd('/usr/local/bin/ffctl apply cool_quiet'));
         profilesSection.addMenuItem(pQuiet);
 
-        this._coreItem = new PopupMenu.PopupMenuItem('CPU: MacBook Hybrid (8/16 Core)', {reactive: false});
+        this._coreItem = new PopupMenu.PopupMenuItem('CPU: Dynamic Hybrid Active', {reactive: false});
         this._coreItem.label.style = 'font-size: 11px; color: #34d399;';
         profilesSection.addMenuItem(this._coreItem);
 
@@ -312,7 +312,8 @@ class FFPowerIndicator extends PanelMenu.Button {
             if (onlineCores === '0-15') {
                 this._coreItem.label.text = `CPU: 16/16 All-Core Boost (${pMaxGhz} GHz)`;
             } else {
-                this._coreItem.label.text = `CPU: MacBook Hybrid 8/16 (${onlineCores} • ${pMaxGhz} GHz)`;
+                let coreLabel = onlineCores === '0-15' ? '16/16 All-Core' : 'Hybrid Active';
+                this._coreItem.label.text = `CPU: ${coreLabel} (${onlineCores} • ${pMaxGhz} GHz)`;
             }
         }
 

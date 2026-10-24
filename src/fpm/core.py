@@ -411,8 +411,10 @@ def set_macbook_hybrid_topology(mode: str | None = None) -> None:
         online_cores = {0, 1, 6, 7, 8, 9, 14, 15}
         p_max, e_max, lpe_max = '3600000', '3200000', '2400000'
     else:
-        online_cores = {0, 1, 6, 7, 8, 9, 14, 15}
-        p_max = '4200000' if on_bat else '4800000'
+        # Balanced mode: All 16 cores available (6 P-cores + 8 E-cores + 2 LP-E cores)
+        # Idle cores sleep in hardware C10 (0W), eliminating video stutter without increasing battery draw!
+        online_cores = set(range(16))
+        p_max = '4400000' if on_bat else '4800000'
         e_max = '3400000' if on_bat else '3800000'
         lpe_max = '2400000' if on_bat else '2500000'
 
@@ -424,8 +426,8 @@ def set_macbook_hybrid_topology(mode: str | None = None) -> None:
 
     for c in sorted(online_cores):
         cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
-        write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
         if c <= 5:
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
             if is_max_bat:
                 p_epp, p_epb = 'power', '15'
@@ -438,13 +440,21 @@ def set_macbook_hybrid_topology(mode: str | None = None) -> None:
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', p_epb)
         elif c <= 13:
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else 'balance_power')
-            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('10' if on_bat else '8'))
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('8' if on_bat else '6'))
         else:
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', lpe_max)
-            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
-            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
+            if is_max_bat:
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
+            else:
+                # 600 MHz min freq and balance_power ensures audio/video timers and PipeWire never glitch
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '600000')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '8' if on_bat else '6')
 
 
 def set_cpu_freq_floor(mode: str | None = None) -> None:
@@ -460,19 +470,25 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
 
     on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
     is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
+    is_max_bat = mode in ('max_battery', 'maximum_battery')
 
     # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
     for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
         is_gt1 = 'gt1' in gt_freq
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
-            write_if_changed(power_prof, 'base' if is_extreme else 'power_saving')
+            # In max_battery keep power_saving; in balanced & ac use 'base' for instant media response
+            write_if_changed(power_prof, 'power_saving' if is_max_bat else 'base')
         min_node = os.path.join(gt_freq, 'min_freq')
         if os.path.exists(min_node):
             if is_extreme:
                 target_min = '500' if is_gt1 else '1400'
-            else:
+            elif is_max_bat:
                 target_min = '100' if is_gt1 else '400'
+            else:
+                # Balanced mode: 450 MHz on Media Engine (gt1) prevents dropped frames in 1080p/4K video playback.
+                # Hardware RC6 still drops act_freq to 0 MHz (0W) when no video is playing!
+                target_min = '450' if is_gt1 else '400'
             write_if_changed(min_node, target_min)
         max_node = os.path.join(gt_freq, 'max_freq')
         if os.path.exists(max_node):
@@ -488,13 +504,13 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
     for card in glob.glob('/sys/class/drm/card*'):
         slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
         if os.path.exists(slpc_node):
-            write_if_changed(slpc_node, 'base' if is_extreme else 'power_saving')
+            write_if_changed(slpc_node, 'power_saving' if is_max_bat else 'base')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
             write_if_changed(boost_node, '2350' if is_extreme else '1600')
         min_node = os.path.join(card, 'gt_min_freq_mhz')
         if os.path.exists(min_node):
-            target_min = '1400' if is_extreme else '400'
+            target_min = '1400' if is_extreme else ('200' if is_max_bat else '400')
             write_if_changed(min_node, target_min)
         max_node = os.path.join(card, 'gt_max_freq_mhz')
         if os.path.exists(max_node):
@@ -564,7 +580,7 @@ def set_rapl_limits(mode: str) -> None:
     elif mode in ('max_battery', 'maximum_battery'):
         pl1, pl2 = 12000000, 20000000
     elif mode == 'battery':
-        pl1, pl2 = 15000000, 28000000
+        pl1, pl2 = 18000000, 30000000
     elif mode == 'cool_quiet':
         pl1, pl2 = 18000000, 30000000
     else:  # ac / balanced optimum (MacBook style: quiet, 35-40°C idle, instant 45W burst)
@@ -907,8 +923,8 @@ def cpu_topology_current() -> str:
     except Exception:
         ghz = 0.0
     if online == '0-15':
-        return f"16/16 Cores Active ({ghz:.1f} GHz Max Boost)"
-    return f"MacBook Hybrid 8/16 Active ({online} • {ghz:.1f} GHz Burst)"
+        return f"16/16 All-Core Active ({ghz:.1f} GHz Max Boost)"
+    return f"MacBook Hybrid ({online} Active • {ghz:.1f} GHz Burst)"
 
 
 def status_snapshot() -> dict:
