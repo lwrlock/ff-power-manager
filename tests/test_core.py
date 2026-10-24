@@ -59,7 +59,7 @@ class ConfigTests(unittest.TestCase):
             core.save_and_apply_config(core.DEFAULT_CONFIG)
             mock_run.assert_called_once()
             args = mock_run.call_args[0][0]
-            self.assertEqual(args[0], 'pkexec')
+            self.assertIn(args[0], ('sudo', 'pkexec'))
             self.assertIn('save-and-apply', args)
 
 
@@ -133,7 +133,7 @@ class ConfigTests(unittest.TestCase):
             core.apply('extreme_performance', core.DEFAULT_CONFIG)
             mock_epp.assert_called_with('performance')
             mock_cpu.assert_called_with('extreme_performance')
-            mock_gpu.assert_called_with('system', 'extreme_performance')
+            mock_gpu.assert_called_with('auto', 'extreme_performance')
 
     @mock.patch('glob.glob')
     @mock.patch('builtins.open', new_callable=mock.mock_open, read_data='cyberpunk2077.e\n')

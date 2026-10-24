@@ -136,36 +136,16 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
                 except Exception as exc:
                     sys.stderr.write(f"Failed to restore power profile: {exc}\n")
 
-            # On AC, continuously ensure zero-stutter hardware floors (P-cores 1.2GHz, EPB 3).
-            # On battery, allow the CPU and GPU to enter deep sleep without forced floors.
-            if not boosted:
-                on_bat = on_battery_from_sysfs()
-                if not on_bat:
-                    needs_tune = False
-                    try:
-                        with open('/sys/devices/system/cpu/cpu0/power/energy_perf_bias', 'r') as f:
-                            if int(f.read().strip()) > 3:
-                                needs_tune = True
-                    except Exception:
-                        pass
-                    if not needs_tune:
-                        try:
-                            with open('/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq', 'r') as f:
-                                if int(f.read().strip()) < 1200000:
-                                    needs_tune = True
-                        except Exception:
-                            pass
-                    if not needs_tune and (now - last_tune_time >= 30.0):
-                        needs_tune = True
-
-                    if needs_tune:
-                        last_tune_time = now
-                        try:
-                            from .core import set_cpu_freq_floor, set_gpu
-                            set_cpu_freq_floor('ac')
-                            set_gpu('system')
-                        except Exception as exc:
-                            sys.stderr.write(f"Background AC floor tuning failed: {exc}\n")
+            # Periodically ensure MacBook-style hybrid topology & RAPL permissions are intact
+            if not boosted and (now - last_tune_time >= 30.0):
+                last_tune_time = now
+                try:
+                    from .core import set_cpu_freq_floor, set_gpu, RUN_DIR, read_text
+                    active_mode = read_text(RUN_DIR / 'power.mode') or ('battery' if on_battery_from_sysfs() else 'ac')
+                    set_cpu_freq_floor(active_mode)
+                    set_gpu('auto', active_mode)
+                except Exception as exc:
+                    sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
 
         sleep_time = 6.0 if on_battery_from_sysfs() else poll_interval
         time.sleep(sleep_time)

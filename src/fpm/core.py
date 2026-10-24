@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
         'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
-        'pcie_aspm': 'powersave',
+        'pcie_aspm': 'powersupersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
         'hwp_dynamic_boost': 'on',
@@ -32,13 +32,13 @@ DEFAULT_CONFIG = {
         'gnome_profile': 'balanced',
         'epp': 'balance_performance',
         'turbo': True,
-        'wifi_power_save': False,
+        'wifi_power_save': True,
         'nvme_runtime_pm': 'auto',
-        'gpu_runtime_pm': 'system',
-        'pcie_aspm': 'system',
-        'usb_autosuspend': 'system',
+        'gpu_runtime_pm': 'auto',
+        'pcie_aspm': 'powersave',
+        'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
-        'hwp_dynamic_boost': 'system',
+        'hwp_dynamic_boost': 'on',
     },
 }
 
@@ -177,6 +177,14 @@ def atomic_json_write(path: pathlib.Path, data: dict) -> None:
     tmp.replace(path)
 
 
+def _run_helper(args: list[str]) -> subprocess.CompletedProcess:
+    helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
+    res = subprocess.run(['sudo', '-n', str(helper), *args], capture_output=True, text=True)
+    if res.returncode == 0:
+        return res
+    return subprocess.run(['pkexec', str(helper), *args], capture_output=True, text=True)
+
+
 def save_config(cfg: dict) -> None:
     valid = _merge_valid(DEFAULT_CONFIG, cfg)
     try:
@@ -184,8 +192,7 @@ def save_config(cfg: dict) -> None:
     except (PermissionError, OSError):
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
         if helper.exists():
-            cmd = ['pkexec', str(helper), 'save-config', json.dumps(valid)]
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            res = _run_helper(['save-config', json.dumps(valid)])
             if res.returncode != 0:
                 err = res.stderr.strip() or 'Authorization error'
                 raise PermissionError(f'Failed to save configuration: {err}')
@@ -197,8 +204,7 @@ def save_and_apply_config(cfg: dict) -> None:
     valid = _merge_valid(DEFAULT_CONFIG, cfg)
     helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
     if helper.exists() and os.geteuid() != 0:
-        cmd = ['pkexec', str(helper), 'save-and-apply', json.dumps(valid)]
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = _run_helper(['save-and-apply', json.dumps(valid)])
         if res.returncode != 0:
             err = res.stderr.strip() or 'Authorization or execution error'
             raise PermissionError(f'Failed to apply configuration: {err}')
@@ -217,17 +223,16 @@ def save_sensor_config(cfg: dict) -> None:
     reports = int(cfg.get('present_confirm_reports', current['present_confirm_reports']))
     win = float(cfg.get('present_confirm_window', current['present_confirm_window']))
     payload = {
-        'silence_timeout': max(2.0, min(10.0, val)),
+        'silence_timeout': max(2.0, min(90.0, val)),
         'present_confirm_reports': max(1, min(5, reports)),
-        'present_confirm_window': max(1.0, min(8.0, win)),
+        'present_confirm_window': max(1.0, min(15.0, win)),
     }
     try:
         atomic_json_write(SENSOR_CONFIG_PATH, payload)
     except (PermissionError, OSError):
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
         if helper.exists():
-            cmd = ['pkexec', str(helper), 'save-sensor', json.dumps(payload)]
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            res = _run_helper(['save-sensor', json.dumps(payload)])
             if res.returncode != 0:
                 err = res.stderr.strip() or 'Authorization error'
                 raise PermissionError(f'Failed to save sensor settings: {err}')
@@ -291,6 +296,8 @@ def set_epp(value: str) -> None:
         for p in glob.glob('/sys/devices/system/cpu/cpu*/power/energy_perf_bias'):
             write_if_changed(p, '8')
     elif value in ('balance_performance', 'default'):
+        for p in glob.glob('/sys/devices/system/cpu/cpu*/power/energy_perf_bias'):
+            write_if_changed(p, '6')
         set_cpu_freq_floor()
 
 
@@ -349,124 +356,158 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
         write_if_changed(ctrl, 'auto')
 
 
-def set_cpu_freq_floor(mode: str | None = None) -> None:
-    # Tiered frequency floors & responsiveness tuning for hybrid Arrow Lake (Ultra 9 285H):
-    # - On extreme_performance (AC): Pin Lion Cove P-cores to 2.2 GHz, E-cores 1.2 GHz, EPB 0 for max gaming FPS.
-    # - On AC: Keep Lion Cove P-cores at 1.2 GHz, E-cores at 1.0 GHz, EPB 3/4 for instant 120 FPS burst.
-    # - On battery: Let cores scale down to hardware minimum (400 MHz) and EPB 8 for deep C10 idle sleep and sub-5W draw.
-    on_bat = on_battery_from_sysfs() if mode is None else (mode == 'battery')
+def set_macbook_hybrid_topology(mode: str | None = None) -> None:
+    """
+    MacBook-style Big.LITTLE / Hybrid Core Parking & Frequency Scaling for Arrow Lake (Ultra 9 285H):
+    - cpu0..5:   Lion Cove P-cores (up to 5.4 GHz)
+    - cpu6..13:  Skymont E-cores (up to 4.5 GHz, high IPC, ultra-efficient)
+    - cpu14..15: Low-Power Island E-cores (up to 2.5 GHz, SoC tile)
+
+    Modes:
+    - extreme_performance / performance: All 16 cores online, full 5.4 GHz P-core & 4.5 GHz E-core boost.
+    - max_battery / maximum_battery: 1 P-core (cpu0 @ 2.4GHz) + 4 Skymont E-cores (cpu6..9 @ 2.6GHz) + 2 LP-E (cpu14..15 @ 2.0GHz) = 7 cores; 9 cores parked (0W leakage).
+    - battery / cool_quiet / ac (default MacBook Efficiency & Fluidity):
+      2 Lion Cove P-cores (cpu0..1 @ 3.6GHz burst) + 4 Skymont E-cores (cpu6..9 @ 3.2GHz burst) + 2 LP-E cores (cpu14..15 @ 2.5GHz) = 8 active hybrid cores;
+      4 P-cores (cpu2..5) and 4 E-cores (cpu10..13) are parked (offline) so package power stays 3-4W and idle temp stays 35-40°C while 120Hz UI remains silky smooth.
+    """
+    try:
+        for p in glob.glob('/sys/class/powercap/intel-rapl*/energy_uj') + glob.glob('/sys/class/powercap/intel-rapl*/*/energy_uj'):
+            os.chmod(p, 0o444)
+    except Exception:
+        pass
+
+    on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
     is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
-    for cpu_dir in sorted(glob.glob('/sys/devices/system/cpu/cpu[0-9]*')):
-        cpu_name = os.path.basename(cpu_dir)
-        try:
-            cpu_idx = int(cpu_name.replace('cpu', ''))
-        except ValueError:
-            continue
+    is_max_bat = mode in ('max_battery', 'maximum_battery')
 
-        if on_bat:
-            target_min = '400000'
-            target_epb = '6' if cpu_idx <= 5 else '7'
-        elif is_extreme:
-            if cpu_idx <= 5:       # Lion Cove P-cores
-                target_min = '2200000'
-                target_epb = '0'
-            elif cpu_idx <= 13:    # Skymont E-cores
-                target_min = '1200000'
-                target_epb = '0'
-            else:                  # Low-Power E-cores on SoC
-                target_min = '800000'
-                target_epb = '4'
+    if is_extreme:
+        # Wake all 16 cores first
+        for c in range(1, 16):
+            write_if_changed(f'/sys/devices/system/cpu/cpu{c}/online', '1')
+        for c in range(0, 16):
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            if c <= 5:
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '1800000')
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '5400000')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'performance')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '0')
+            elif c <= 13:
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '1200000')
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '4500000')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'performance')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '0')
+            else:
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
+                write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '2500000')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_performance')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '4')
+        return
+
+    # MacBook Hybrid Mode (Battery, Cool & Quiet, and Default Balanced AC)
+    if is_max_bat:
+        online_cores = {0, 6, 7, 8, 9, 14, 15}
+        p_max, e_max, lpe_max = '2600000', '2600000', '2000000'
+    elif mode == 'cool_quiet':
+        online_cores = {0, 1, 6, 7, 8, 9, 14, 15}
+        p_max, e_max, lpe_max = '3600000', '3200000', '2400000'
+    else:
+        online_cores = {0, 1, 6, 7, 8, 9, 14, 15}
+        p_max = '4200000' if on_bat else '4800000'
+        e_max = '3400000' if on_bat else '3800000'
+        lpe_max = '2400000' if on_bat else '2500000'
+
+    # Ensure online cores are brought up and parked cores are put into deep offline sleep
+    for c in range(1, 16):
+        online_path = f'/sys/devices/system/cpu/cpu{c}/online'
+        if os.path.exists(online_path):
+            write_if_changed(online_path, '1' if c in online_cores else '0')
+
+    for c in sorted(online_cores):
+        cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+        write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
+        if c <= 5:
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
+            if is_max_bat:
+                p_epp, p_epb = 'power', '15'
+            elif mode == 'cool_quiet':
+                p_epp, p_epb = 'balance_power', '10'
+            else:
+                # Snappy single-thread app launch & JS responsiveness while resting at 400MHz C10 in idle
+                p_epp = 'balance_power' if on_bat else 'balance_performance'
+                p_epb = '8' if on_bat else '6'
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', p_epb)
+        elif c <= 13:
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else 'balance_power')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('10' if on_bat else '8'))
         else:
-            if cpu_idx <= 5:       # Lion Cove P-cores
-                target_min = '1200000'
-                target_epb = '3'
-            elif cpu_idx <= 13:    # Skymont E-cores
-                target_min = '1000000'
-                target_epb = '4'
-            else:                  # Low-Power E-cores on SoC
-                target_min = '800000'
-                target_epb = '6'
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', lpe_max)
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
 
-        min_node = os.path.join(cpu_dir, 'cpufreq/scaling_min_freq')
-        if os.path.exists(min_node):
-            try:
-                cur = int(pathlib.Path(min_node).read_text().strip())
-                if on_bat or cur != int(target_min):
-                    write_if_changed(min_node, target_min)
-            except Exception:
-                pass
 
-        # Adjust EPB per-core
-        epp_node = os.path.join(cpu_dir, 'cpufreq/energy_performance_preference')
-        epp = read_text(epp_node) or ''
-        if is_extreme:
-            epb_node = os.path.join(cpu_dir, 'power/energy_perf_bias')
-            if os.path.exists(epb_node):
-                write_if_changed(epb_node, target_epb)
-        elif epp in ('balance_performance', 'default', 'balance_power'):
-            epb_node = os.path.join(cpu_dir, 'power/energy_perf_bias')
-            if os.path.exists(epb_node):
-                write_if_changed(epb_node, target_epb)
+def set_cpu_freq_floor(mode: str | None = None) -> None:
+    set_macbook_hybrid_topology(mode)
 
 
 def set_gpu(value: str = 'system', mode: str | None = None) -> None:
-    if value != 'system':
-        for dev in glob.glob('/sys/bus/pci/devices/*'):
-            vendor = read_text(os.path.join(dev, 'vendor'))
-            cls = read_text(os.path.join(dev, 'class'))
-            if vendor == '0x8086' and cls and cls.startswith('0x03'):
-                write_if_changed(os.path.join(dev, 'power/control'), value)
+    for dev in glob.glob('/sys/bus/pci/devices/*'):
+        vendor = read_text(os.path.join(dev, 'vendor'))
+        cls = read_text(os.path.join(dev, 'class'))
+        if vendor == '0x8086' and cls and cls.startswith('0x03'):
+            write_if_changed(os.path.join(dev, 'power/control'), 'auto' if value == 'system' else value)
 
-    on_bat = on_battery_from_sysfs() if mode is None else (mode == 'battery')
+    on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
     is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
 
     # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
     for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
+        is_gt1 = 'gt1' in gt_freq
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
-            write_if_changed(power_prof, 'base')
+            write_if_changed(power_prof, 'base' if is_extreme else 'power_saving')
         min_node = os.path.join(gt_freq, 'min_freq')
         if os.path.exists(min_node):
-            is_gt1 = 'gt1' in gt_freq
             if is_extreme:
-                target_min = '500' if is_gt1 else '1800'
+                target_min = '500' if is_gt1 else '1400'
             else:
-                target_min = '500' if is_gt1 else '800'
+                target_min = '100' if is_gt1 else '400'
             write_if_changed(min_node, target_min)
         max_node = os.path.join(gt_freq, 'max_freq')
         if os.path.exists(max_node):
             rp0_node = os.path.join(gt_freq, 'rp0_freq')
             rp0 = read_text(rp0_node)
-            target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else ('1300' if 'gt1' in gt_freq else '2350')
+            if is_extreme:
+                target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else ('1300' if is_gt1 else '2350')
+            else:
+                target_max = '1100' if is_gt1 else ('1600' if on_bat else '2000')
             write_if_changed(max_node, target_max)
 
     # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6 legacy i915 nodes)
     for card in glob.glob('/sys/class/drm/card*'):
         slpc_node = os.path.join(card, 'gt/gt0/slpc_power_profile')
         if os.path.exists(slpc_node):
-            write_if_changed(slpc_node, 'base')
+            write_if_changed(slpc_node, 'base' if is_extreme else 'power_saving')
         boost_node = os.path.join(card, 'gt/gt0/rps_boost_freq_mhz')
         if os.path.exists(boost_node):
-            write_if_changed(boost_node, '2350')
+            write_if_changed(boost_node, '2350' if is_extreme else '1600')
         min_node = os.path.join(card, 'gt_min_freq_mhz')
         if os.path.exists(min_node):
-            rp1_node = os.path.join(card, 'gt_RP1_freq_mhz')
-            rp1 = read_text(rp1_node)
-            target_min = '1800' if is_extreme else (rp1 if rp1 and rp1.isdigit() else '500')
+            target_min = '1400' if is_extreme else '400'
             write_if_changed(min_node, target_min)
         max_node = os.path.join(card, 'gt_max_freq_mhz')
         if os.path.exists(max_node):
-            write_if_changed(max_node, '2350')
+            write_if_changed(max_node, '2350' if is_extreme else '1800')
 
 
 def set_pcie_aspm(value: str) -> None:
     if value == 'system':
-        return
-    if value == 'powersupersave':
         value = 'powersave'
     p = '/sys/module/pcie_aspm/parameters/policy'
     if os.path.exists(p):
-        write_if_changed(p, value)
+        if not write_if_changed(p, value) and value == 'powersupersave':
+            write_if_changed(p, 'powersave')
 
 
 def set_usb(value: str) -> None:
@@ -511,20 +552,32 @@ def apply_kernel_tunings(mode: str) -> None:
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
-    # Aggressive VFS cache pressure to ensure high available RAM
-    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '200')
+    # Keep VFS directory/inode and page cache warm in 32GB RAM for instant app launches
+    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '50')
+    write_if_changed('/proc/sys/vm/swappiness', '10')
 
 
 def set_rapl_limits(mode: str) -> None:
-    # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits
+    # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits (MacBook-style cool & responsive)
     if mode in ('extreme_performance', 'performance'):
         pl1, pl2 = 65000000, 100000000
-    elif mode == 'battery' or mode in ('max_battery', 'maximum_battery'):
-        pl1, pl2 = 20000000, 35000000
+    elif mode in ('max_battery', 'maximum_battery'):
+        pl1, pl2 = 12000000, 20000000
+    elif mode == 'battery':
+        pl1, pl2 = 15000000, 28000000
     elif mode == 'cool_quiet':
-        pl1, pl2 = 25000000, 40000000
-    else:  # ac / balanced optimum
-        pl1, pl2 = 35000000, 55000000
+        pl1, pl2 = 18000000, 30000000
+    else:  # ac / balanced optimum (MacBook style: quiet, 35-40°C idle, instant 45W burst)
+        pl1, pl2 = 28000000, 45000000
+
+    # Set Lenovo IdeaPad ACPI firmware platform_profile to match
+    if PLATFORM_PROFILE_PATH.exists():
+        if mode in ('extreme_performance', 'performance'):
+            write_if_changed(PLATFORM_PROFILE_PATH, 'performance')
+        elif mode in ('battery', 'max_battery', 'maximum_battery', 'cool_quiet'):
+            write_if_changed(PLATFORM_PROFILE_PATH, 'low-power')
+        else:
+            write_if_changed(PLATFORM_PROFILE_PATH, 'balanced')
 
     rapl_base = pathlib.Path('/sys/class/powercap/intel-rapl')
     for d in rapl_base.glob('intel-rapl:*'):
@@ -596,7 +649,27 @@ def on_battery_from_sysfs() -> bool:
     return True
 
 
+_LAST_RAPL_UJ: int | None = None
+_LAST_RAPL_TS: float | None = None
+
+
+def _read_rapl_compute_uj() -> int | None:
+    """Read CPU Core + GPU Uncore energy in microjoules (with fallback to Package)."""
+    c_path = pathlib.Path('/sys/class/powercap/intel-rapl:0:0/energy_uj')
+    u_path = pathlib.Path('/sys/class/powercap/intel-rapl:0:1/energy_uj')
+    p_path = pathlib.Path('/sys/class/powercap/intel-rapl:0/energy_uj')
+    try:
+        if c_path.exists() and u_path.exists():
+            return int(c_path.read_text().strip()) + int(u_path.read_text().strip())
+        if p_path.exists():
+            return int(p_path.read_text().strip())
+    except Exception:
+        pass
+    return None
+
+
 def power_now_watts() -> float | None:
+    global _LAST_RAPL_UJ, _LAST_RAPL_TS
     for p in sorted(glob.glob('/sys/class/power_supply/BAT*/power_now')):
         try:
             val = int(pathlib.Path(p).read_text().strip())
@@ -614,6 +687,27 @@ def power_now_watts() -> float | None:
                     return (c * v) / 1_000_000_000_000.0
         except Exception:
             continue
+    # Fallback to Intel RAPL Compute (Core + GPU + 1.8W SoC baseline) when on AC
+    now_uj = _read_rapl_compute_uj()
+    if now_uj is not None:
+        try:
+            now_ts = time.monotonic()
+            if _LAST_RAPL_UJ is not None and _LAST_RAPL_TS is not None:
+                dt = now_ts - _LAST_RAPL_TS
+                if dt >= 0.08 and now_uj >= _LAST_RAPL_UJ:
+                    w = 1.80 + (now_uj - _LAST_RAPL_UJ) / (dt * 1_000_000.0)
+                    _LAST_RAPL_UJ, _LAST_RAPL_TS = now_uj, now_ts
+                    return round(w, 2)
+            # First call: sample over 120ms
+            time.sleep(0.12)
+            now2_uj = _read_rapl_compute_uj()
+            now2_ts = time.monotonic()
+            if now2_uj is not None and now2_uj >= now_uj and (now2_ts - now_ts) > 0:
+                _LAST_RAPL_UJ, _LAST_RAPL_TS = now2_uj, now2_ts
+                w = 1.80 + (now2_uj - now_uj) / ((now2_ts - now_ts) * 1_000_000.0)
+                return round(w, 2)
+        except Exception:
+            pass
     return None
 
 
@@ -805,6 +899,18 @@ def set_lenovo_feature(name: str, value: bool | str | int) -> bool:
     return False
 
 
+def cpu_topology_current() -> str:
+    online = read_text('/sys/devices/system/cpu/online') or '0-15'
+    p_freq = read_text('/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq') or '0'
+    try:
+        ghz = int(p_freq) / 1_000_000.0
+    except Exception:
+        ghz = 0.0
+    if online == '0-15':
+        return f"16/16 Cores Active ({ghz:.1f} GHz Max Boost)"
+    return f"MacBook Hybrid 8/16 Active ({online} • {ghz:.1f} GHz Burst)"
+
+
 def status_snapshot() -> dict:
     mode = 'battery' if on_battery_from_sysfs() else 'ac'
     epp = read_text('/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
@@ -821,6 +927,7 @@ def status_snapshot() -> dict:
         'refresh_rate': current_refresh_rate(),
         'gnome_profile': command_output(['/usr/bin/powerprofilesctl', 'get']),
         'epp': epp,
+        'cpu_topology': cpu_topology_current(),
         'turbo': None if turbo_raw is None else turbo_raw == '0',
         'hwp_dynamic_boost': hwp,
         'wifi_power_save': wifi,

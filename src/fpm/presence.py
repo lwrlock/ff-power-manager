@@ -103,10 +103,17 @@ class PresenceController:
         if p.exists():
             try:
                 txt = p.read_text().strip()
-                if txt in ('battery', 'ac'):
+                if txt in ('battery', 'ac', 'max_battery', 'maximum_battery', 'extreme_performance', 'cool_quiet'):
                     mode = txt
             except Exception:
                 pass
+        # Smart battery < 30% check for automatic 60Hz power saving
+        try:
+            cap_p = pathlib.Path('/sys/class/power_supply/BAT1/capacity')
+            if cap_p.exists() and on_battery_from_sysfs() and int(cap_p.read_text().strip()) <= 30:
+                mode = 'max_battery'
+        except Exception:
+            pass
         if self._last_checked_mode != mode:
             self._last_checked_mode = mode
             self._update_refresh_rate(mode)
@@ -239,14 +246,8 @@ class PresenceController:
     def _update_refresh_rate(self, mode: str) -> None:
         if not self.cfg.get('auto_refresh_rate', True):
             return
-        # Automatic refresh rate switching:
-        # - Battery: 120Hz + VRR (dynamic 48-120Hz adaptive clocking for silky smooth 120 FPS without battery penalty)
-        # - AC (Plugged in): 120Hz + VRR (full 120 FPS buttery smooth ProMotion)
         force_120_battery = self.cfg.get('force_120hz_on_battery', True)
-        if mode == 'battery' and not force_120_battery:
-            target_mode = '2880x1800@60.000'
-        else:
-            target_mode = '2880x1800@120.000+vrr'
+        want_60hz = (mode in ('max_battery', 'maximum_battery')) or (mode == 'battery' and not force_120_battery)
 
         try:
             res = self.session.call_sync(
@@ -261,13 +262,26 @@ class PresenceController:
                 return
 
             current_mode = None
+            mode_120 = None
+            mode_60 = None
             for m in monitors[0][1]:
+                m_id = m[0]
                 if m[6].get('is-current'):
-                    current_mode = m[0]
-                    break
+                    current_mode = m_id
+                if m_id.startswith('2880x1800@120'):
+                    if '+vrr' in m_id or mode_120 is None:
+                        mode_120 = m_id
+                elif m_id.startswith('2880x1800@60'):
+                    mode_60 = m_id
+
+            target_mode = (mode_60 if want_60hz else mode_120) or current_mode
+            if not target_mode:
+                return
+            label_str = '60 Hz (Power Saver)' if want_60hz else '120 Hz (ProMotion OLED)'
+
             if current_mode == target_mode:
                 try:
-                    (RUN_DIR / 'refresh.rate').write_text(target_mode)
+                    (RUN_DIR / 'refresh.rate').write_text(label_str)
                 except Exception:
                     pass
                 return
@@ -284,14 +298,14 @@ class PresenceController:
                 'ApplyMonitorsConfig',
                 GLib.Variant('(uua(iiduba(ssa{sv}))a{sv})', (
                     serial,
-                    2,
+                    1,
                     new_lm,
-                    {'layout-mode': GLib.Variant('u', 1)}
+                    {}
                 )),
                 None, Gio.DBusCallFlags.NONE, 2000, None
             )
             try:
-                (RUN_DIR / 'refresh.rate').write_text(target_mode)
+                (RUN_DIR / 'refresh.rate').write_text(label_str)
             except Exception:
                 pass
         except Exception:

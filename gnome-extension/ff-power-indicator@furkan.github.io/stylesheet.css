@@ -1,108 +1,86 @@
-/* FF Power Indicator & Samsung 2.8K OLED Top Bar Care Stylesheet */
+/* =====================================================================
+   Ubuntu Yaru-Dark OLED Glass Refinement (Preserves Default Ubuntu Menus)
+   ===================================================================== */
 
-/* True Black (#000000) pure zero-watt panel background with enlarged height */
-#panel,
-#panelBox {
-    height: 42px !important;
-    background-color: #000000 !important;
-    font-size: 14px !important;
-    font-weight: 500;
-    transition-duration: 250ms;
+/* Top Bar: Deep OLED Obsidian with Subtle Glass Hairline */
+#panel {
+    background-color: rgba(12, 13, 18, 0.88) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45) !important;
+    transition-duration: 180ms;
 }
 
 #panel .panel-corner {
-    -panel-corner-background-color: #000000 !important;
+    -panel-corner-background-color: transparent !important;
     -panel-corner-border-color: transparent !important;
 }
 
-/* Soft dimmed icons & labels for OLED anti-burn-in */
+/* Soft Pill Hover for Top Bar Buttons */
 #panel .panel-button {
-    font-size: 14px !important;
-    padding: 0 10px !important;
-    color: rgba(215, 222, 230, 0.78) !important;
-    transition-duration: 180ms;
+    border-radius: 12px !important;
+    margin: 2px 2px !important;
+    transition-duration: 140ms !important;
 }
 
-/* Enlarge top bar icons for high-resolution 2.8K OLED */
-#panel .system-status-icon,
-#panel .panel-button StIcon,
-#panel .panel-button .icon,
-#panel StIcon.system-status-icon {
-    icon-size: 20px !important;
-    width: 20px !important;
-    height: 20px !important;
-}
-
-/* Workspace dots */
-#panel .panel-button#panelActivities .workspace-dot {
-    width: 8px !important;
-    height: 8px !important;
-    border-radius: 4px !important;
-    background-color: rgba(215, 222, 230, 0.75) !important;
-    transition-duration: 180ms;
-}
-
-/* Hover / active / focus */
 #panel .panel-button:hover,
 #panel .panel-button:active,
-#panel .panel-button:focus,
 #panel .panel-button:overview,
 #panel .panel-button:checked {
-    color: #ffffff !important;
-    background-color: rgba(255, 255, 255, 0.10) !important;
+    background-color: rgba(255, 255, 255, 0.13) !important;
+    border-radius: 12px !important;
 }
 
-#panel .panel-button:hover StIcon,
-#panel .panel-button:hover StLabel,
-#panel .panel-button:hover .system-status-icon,
-#panel .panel-button:hover .app-menu-icon,
-#panel .panel-button:hover .clock,
-#panel .panel-button:hover .clock-display,
-#panel .panel-button:hover .appindicator-trayicons-box StIcon {
-    color: #ffffff !important;
-    background-color: transparent !important;
+/* Ubuntu Popup Menus & Notifications: Frosted OLED Glass */
+.popup-menu-boxpointer .popup-menu-content {
+    background-color: rgba(18, 20, 28, 0.78) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65) !important;
 }
 
-#panel .panel-button#panelActivities:hover .workspace-dot {
-    background-color: #ffffff !important;
+.popup-menu-item {
+    border-radius: 10px !important;
+    transition-duration: 120ms !important;
 }
 
-/* FF Power Indicator Center Capsule (Dynamic Island Style) */
+.notification-banner,
+.modal-dialog,
+.osd-window {
+    background-color: rgba(16, 18, 26, 0.80) !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65) !important;
+}
+
+/* FF Power Indicator Capsule */
 .ff-power-label {
-    font-weight: 500;
-    font-size: 13px !important;
-    padding: 3px 18px !important;
-    margin: 2px 0 !important;
-    border-radius: 20px !important;
-    color: #ffffff !important;
-    background-color: rgba(255, 255, 255, 0.12) !important;
-    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    font-weight: 600;
+    font-size: 12.5px;
+    padding: 2px 12px;
+    margin: 2px 4px;
+    border-radius: 12px;
+    color: #f8fafc;
+    background-color: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.16);
     transition-duration: 180ms;
 }
 
 .ff-power-label:hover {
-    color: #ffffff !important;
-    background-color: rgba(255, 255, 255, 0.24) !important;
-    border-color: rgba(255, 255, 255, 0.36) !important;
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.20);
+    border-color: rgba(255, 255, 255, 0.30);
 }
 
-/* Dock Oval & Seamless Glass Fix (Eliminate black box around rounded dock) */
-#dashtodockContainer {
-    background-color: transparent !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+.mediamac-btn {
+    padding: 4px 10px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.10);
+    color: #f8fafc;
+    font-size: 11px;
+    font-weight: 500;
 }
 
-#dashtodockContainer #dash {
-    background-color: transparent !important;
-    border: none !important;
-    border-radius: 24px !important;
-}
-
-#dashtodockContainer #dash .dash-background {
-    border-radius: 24px !important;
-    background-color: rgba(22, 22, 26, 0.40) !important;
-    border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35) !important;
+.mediamac-btn:hover {
+    background-color: rgba(56, 189, 248, 0.28);
+    color: #ffffff;
 }

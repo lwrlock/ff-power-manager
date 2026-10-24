@@ -22,6 +22,7 @@ from .core import (
     status_snapshot,
     set_lenovo_feature,
     PRESETS,
+    _run_helper,
 )
 
 USER_CFG = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
@@ -112,9 +113,57 @@ def is_active(unit: str, user: bool = False) -> bool:
     return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+class _CompatToolbarView(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self._top_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True, hexpand=True)
+        self._bottom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.append(self._top_box)
+        self.append(self._content_box)
+        self.append(self._bottom_box)
+
+    def add_top_bar(self, widget):
+        self._top_box.append(widget)
+
+    def set_content(self, widget):
+        widget.set_vexpand(True)
+        widget.set_hexpand(True)
+        self._content_box.append(widget)
+
+    def add_bottom_bar(self, widget):
+        self._bottom_box.append(widget)
+
+
+class _CompatSwitchRow(Adw.ActionRow):
+    def __init__(self, title: str = '', subtitle: str = '', **kwargs):
+        super().__init__(title=title, **kwargs)
+        if subtitle:
+            self.set_subtitle(subtitle)
+        self._switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.add_suffix(self._switch)
+        self.set_activatable_widget(self._switch)
+
+    def get_active(self) -> bool:
+        return self._switch.get_active()
+
+    def set_active(self, active: bool) -> None:
+        self._switch.set_active(bool(active))
+
+    def connect(self, detailed_signal: str, handler, *args):
+        if detailed_signal == 'notify::active':
+            return self._switch.connect('notify::active', lambda _sw, pspec, *a: handler(self, pspec, *a), *args)
+        return super().connect(detailed_signal, handler, *args)
+
+
+ToolbarViewCls = getattr(Adw, 'ToolbarView', _CompatToolbarView)
+SwitchRowCls = getattr(Adw, 'SwitchRow', _CompatSwitchRow)
+APP_FLAGS = getattr(Gio.ApplicationFlags, 'DEFAULT_FLAGS', Gio.ApplicationFlags.FLAGS_NONE)
+
+
 class PowerManagerApp(Adw.Application):
     def __init__(self):
-        super().__init__(application_id='com.ff.PowerManager', flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        super().__init__(application_id='com.ff.PowerManager', flags=APP_FLAGS)
 
     def do_activate(self):
         self._load_styles()
@@ -146,7 +195,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.overlay = Adw.ToastOverlay()
         self.set_content(self.overlay)
-        toolbar = Adw.ToolbarView()
+        toolbar = ToolbarViewCls()
         self.overlay.set_child(toolbar)
 
         self.stack = Adw.ViewStack()
@@ -178,11 +227,18 @@ class MainWindow(Adw.ApplicationWindow):
         switcher.set_reveal(True)
         toolbar.add_bottom_bar(switcher)
 
-        self.stack.add_titled_with_icon(self._overview_page(), 'overview', 'Overview', 'view-dashboard-symbolic')
-        self.stack.add_titled_with_icon(self._mode_page('battery'), 'battery', 'Battery', 'battery-good-symbolic')
-        self.stack.add_titled_with_icon(self._mode_page('ac'), 'ac', 'AC Power', 'power-profile-performance-symbolic')
-        self.stack.add_titled_with_icon(self._presence_page(), 'presence', 'Display & Presence', 'system-lock-screen-symbolic')
-        self.stack.add_titled_with_icon(self._diagnostics_page(), 'diagnostics', 'Diagnostics', 'utilities-system-monitor-symbolic')
+        for page_widget, name, title_str, icon_str in [
+            (self._overview_page(), 'overview', 'Overview', 'view-dashboard-symbolic'),
+            (self._mode_page('battery'), 'battery', 'Battery', 'battery-good-symbolic'),
+            (self._mode_page('ac'), 'ac', 'AC Power', 'power-profile-performance-symbolic'),
+            (self._presence_page(), 'presence', 'Display & Presence', 'system-lock-screen-symbolic'),
+            (self._diagnostics_page(), 'diagnostics', 'Diagnostics', 'utilities-system-monitor-symbolic'),
+        ]:
+            if hasattr(self.stack, 'add_titled_with_icon'):
+                self.stack.add_titled_with_icon(page_widget, name, title_str, icon_str)
+            else:
+                vp = self.stack.add_titled(page_widget, name, title_str)
+                vp.set_icon_name(icon_str)
 
         # Automatically start live telemetry polling in GUI (every 2.5s)
         self.live_source = GLib.timeout_add_seconds(3, self._live_tick)
@@ -222,21 +278,38 @@ class MainWindow(Adw.ApplicationWindow):
             self.toast('Could not launch terminal. You can run "ff-tui" manually in a terminal.')
 
     def _show_about(self) -> None:
-        dialog = Adw.AboutDialog(
-            application_name='FF Power Manager',
-            application_icon='preferences-system-power',
-            developer_name='Furkan (@lwrlock)',
-            version='1.2.0',
-            website='https://lwrlock.github.io/ff-power-manager/',
-            issue_url='https://github.com/lwrlock/ff-power-manager/issues',
-            license_type=Gtk.License.MIT_X11,
-            comments=(
-                "Engineered for Lenovo IdeaPad Pro 5 14IAH10 and modern Intel mobile platforms.\n"
-                "MacBook-level battery efficiency, zero-stutter performance architecture.\n\n"
-                "Developed as an open-source initiative by a 17-year-old computer engineering student in collaboration with AI."
-            ),
-        )
-        dialog.present(self)
+        if hasattr(Adw, 'AboutDialog'):
+            dialog = Adw.AboutDialog(
+                application_name='FF Power Manager',
+                application_icon='preferences-system-power',
+                developer_name='Furkan (@lwrlock)',
+                version='1.2.0',
+                website='https://lwrlock.github.io/ff-power-manager/',
+                issue_url='https://github.com/lwrlock/ff-power-manager/issues',
+                license_type=Gtk.License.MIT_X11,
+                comments=(
+                    "Engineered for Lenovo IdeaPad Pro 5 14IAH10 and modern Intel mobile platforms.\n"
+                    "MacBook-level battery efficiency, zero-stutter performance architecture.\n\n"
+                    "Developed as an open-source initiative by a 17-year-old computer engineering student in collaboration with AI."
+                ),
+            )
+            dialog.present(self)
+        else:
+            dialog = Gtk.AboutDialog(
+                transient_for=self,
+                modal=True,
+                program_name='FF Power Manager',
+                logo_icon_name='preferences-system-power',
+                authors=['Furkan (@lwrlock)'],
+                version='1.2.0',
+                website='https://lwrlock.github.io/ff-power-manager/',
+                license_type=Gtk.License.MIT_X11,
+                comments=(
+                    "Engineered for Lenovo IdeaPad Pro 5 14IAH10 and modern Intel mobile platforms.\n"
+                    "MacBook-level battery efficiency, zero-stutter performance architecture."
+                ),
+            )
+            dialog.present()
 
     def _overview_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title='Overview', icon_name='view-dashboard-symbolic')
@@ -271,6 +344,7 @@ class MainWindow(Adw.ApplicationWindow):
             ('mode', 'Power Source', 'ac-adapter-symbolic'),
             ('watts', 'Active Power Draw', 'energy-battery-symbolic'),
             ('battery_percent', 'Battery Charge Level', 'battery-level-80-symbolic'),
+            ('cpu_topology', 'Hybrid CPU Core Topology', 'processor-symbolic'),
             ('refresh_rate', 'Display Refresh Rate', 'video-display-symbolic'),
             ('gnome_profile', 'GNOME Power Profile', 'preferences-system-symbolic'),
             ('epp', 'CPU Energy Preference (EPP)', 'applications-science-symbolic'),
@@ -316,21 +390,21 @@ class MainWindow(Adw.ApplicationWindow):
         )
         page.add(lenovo_group)
 
-        self.lenovo_cm_row = Adw.SwitchRow(
+        self.lenovo_cm_row = SwitchRowCls(
             title='Battery Conservation Mode (80% Limit)',
             subtitle='Stops charging at 80% to dramatically extend lithium battery lifespan.'
         )
         self.lenovo_cm_row.connect('notify::active', lambda row, _: self._toggle_lenovo('conservation_mode', row.get_active()))
         lenovo_group.add(self.lenovo_cm_row)
 
-        self.lenovo_fn_row = Adw.SwitchRow(
+        self.lenovo_fn_row = SwitchRowCls(
             title='Fn-Lock (Primary Function Keys)',
             subtitle='Use F1-F12 for media/brightness hotkeys without holding Fn.'
         )
         self.lenovo_fn_row.connect('notify::active', lambda row, _: self._toggle_lenovo('fn_lock', row.get_active()))
         lenovo_group.add(self.lenovo_fn_row)
 
-        self.lenovo_usb_row = Adw.SwitchRow(
+        self.lenovo_usb_row = SwitchRowCls(
             title='Always-On USB Charging',
             subtitle='Allows charging smartphones and accessories even when the laptop is turned off.'
         )
@@ -395,12 +469,12 @@ class MainWindow(Adw.ApplicationWindow):
         controls['epp'] = epp_row
         core_group.add(epp_row)
 
-        turbo_row = Adw.SwitchRow(title='Intel Turbo Boost', subtitle='Disabling capping may increase battery life; keeping enabled provides peak responsiveness.')
+        turbo_row = SwitchRowCls(title='Intel Turbo Boost', subtitle='Disabling capping may increase battery life; keeping enabled provides peak responsiveness.')
         turbo_row.set_active(bool(s['turbo']))
         controls['turbo'] = turbo_row
         core_group.add(turbo_row)
 
-        wifi_row = Adw.SwitchRow(title='Wi-Fi Power Management', subtitle='Enables dynamic power saving on Intel Wi-Fi 7 chipset during idle.')
+        wifi_row = SwitchRowCls(title='Wi-Fi Power Management', subtitle='Enables dynamic power saving on Intel Wi-Fi 7 chipset during idle.')
         wifi_row.set_active(bool(s['wifi_power_save']))
         controls['wifi_power_save'] = wifi_row
         core_group.add(wifi_row)
@@ -432,7 +506,7 @@ class MainWindow(Adw.ApplicationWindow):
             )
             page.add(boost_group)
 
-            self.autoboost_switch = Adw.SwitchRow(
+            self.autoboost_switch = SwitchRowCls(
                 title='Automatic GameMode &amp; Compiler Boost',
                 subtitle='Detects Steam, 3D rendering, and compilation to auto-boost CPU/GPU clocks.'
             )
@@ -476,14 +550,14 @@ class MainWindow(Adw.ApplicationWindow):
             description='Seamlessly balances battery longevity and extreme 120Hz smoothness.'
         )
         page.add(display_grp)
-        self.promotion_switch = Adw.SwitchRow(
+        self.promotion_switch = SwitchRowCls(
             title='ProMotion 120Hz + VRR (MacBook Style)',
             subtitle='Keeps 120 Hz active on battery. Hardware VRR drops to 30-48Hz during static screens to save power.'
         )
         self.promotion_switch.set_active(bool(self.pcfg.get('promotion_120hz', True)))
         display_grp.add(self.promotion_switch)
 
-        self.refresh_switch = Adw.SwitchRow(
+        self.refresh_switch = SwitchRowCls(
             title='Dynamic Refresh Rate Switching',
             subtitle='Enables automatic display mode management via Mutter D-Bus.'
         )
@@ -497,7 +571,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         page.add(oled_grp)
 
-        self.oled_care_switch = Adw.SwitchRow(
+        self.oled_care_switch = SwitchRowCls(
             title='OLED Anti-Burn-in &amp; Dynamic Dimming',
             subtitle='Gradually dims panel on inactivity; powers down pixels (0W pure black) when away.'
         )
@@ -519,7 +593,7 @@ class MainWindow(Adw.ApplicationWindow):
             description='Hardware Time-of-Flight radar (0.0% CPU overhead). Webcams are never accessed.'
         )
         page.add(status)
-        self.presence_service_row = Adw.SwitchRow(
+        self.presence_service_row = SwitchRowCls(
             title='Presence Automation Daemon',
             subtitle='Instant screen wake upon return, zero-touch blanking when away.'
         )
@@ -566,7 +640,7 @@ class MainWindow(Adw.ApplicationWindow):
             ('inhibit_on_media', 'Inhibit Screen Off During Media Playback', 'Prevents screen-off while watching videos, movies or listening to media.', True),
             ('lock_on_away', 'Lock Session on Departure', 'Secures the GNOME desktop session immediately upon departure.', False),
         ]:
-            sw = Adw.SwitchRow(title=title, subtitle=sub)
+            sw = SwitchRowCls(title=title, subtitle=sub)
             sw.set_active(bool(self.pcfg.get(key, defval)))
             self.presence_switches[key] = sw
             tuning.add(sw)
@@ -634,6 +708,7 @@ class MainWindow(Adw.ApplicationWindow):
             'mode': 'Battery (Discharging)' if s['mode'] == 'battery' else 'AC Power (Mains Online)',
             'watts': '—' if s['watts'] is None else f"{s['watts']:.2f} W",
             'battery_percent': '—' if s['battery_percent'] is None else f"{s['battery_percent']}%",
+            'cpu_topology': s.get('cpu_topology', 'MacBook Hybrid 8/16 Active'),
             'refresh_rate': s.get('refresh_rate', '—'),
             'gnome_profile': s['gnome_profile'] or '—',
             'epp': s['epp'] or '—',
@@ -720,8 +795,7 @@ class MainWindow(Adw.ApplicationWindow):
         val = '1' if active else '0'
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
         if helper.exists() and os.geteuid() != 0:
-            subprocess.run(['pkexec', str(helper), 'set-lenovo', feat, val],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _run_helper(['set-lenovo', feat, val])
         else:
             set_lenovo_feature(feat, val)
         self.refresh_status()
@@ -733,8 +807,7 @@ class MainWindow(Adw.ApplicationWindow):
         subaction = 'enable-now' if active else 'disable-now'
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
         if helper.exists() and os.geteuid() != 0:
-            subprocess.run(['pkexec', str(helper), 'autoboost-service', subaction],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _run_helper(['autoboost-service', subaction])
         else:
             act = ['enable', '--now'] if active else ['disable', '--now']
             subprocess.run(['/usr/bin/systemctl', *act, AUTOBOOST_SERVICE],
@@ -762,7 +835,7 @@ class MainWindow(Adw.ApplicationWindow):
             if isinstance(row, Adw.ComboRow):
                 if v in row._values:
                     row.set_selected(row._values.index(v))
-            elif isinstance(row, Adw.SwitchRow):
+            elif isinstance(row, SwitchRowCls):
                 row.set_active(bool(v))
         mode_label = 'Battery' if mode == 'battery' else 'AC Power'
 
@@ -781,7 +854,7 @@ class MainWindow(Adw.ApplicationWindow):
         for k, row in ctrls.items():
             if isinstance(row, Adw.ComboRow):
                 new_sub[k] = row._values[row.get_selected()]
-            elif isinstance(row, Adw.SwitchRow):
+            elif isinstance(row, SwitchRowCls):
                 new_sub[k] = row.get_active()
         self.cfg[mode] = new_sub
         try:
@@ -806,7 +879,7 @@ class MainWindow(Adw.ApplicationWindow):
         user_action = 'enable' if active else 'disable'
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
         if helper.exists() and os.geteuid() != 0:
-            subprocess.run(['pkexec', str(helper), 'sensor-service', sys_action], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _run_helper(['sensor-service', sys_action])
         else:
             act = ['enable', '--now'] if active else ['disable', '--now']
             subprocess.run(['/usr/bin/systemctl', *act, SYSTEM_SENSOR], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -839,9 +912,9 @@ class MainWindow(Adw.ApplicationWindow):
             user_action = 'enable' if active else 'disable'
             helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
             if helper.exists() and os.geteuid() != 0:
-                subprocess.run(['pkexec', str(helper), 'sensor-service', sys_action], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _run_helper(['sensor-service', sys_action])
                 if active:
-                    subprocess.run(['pkexec', str(helper), 'sensor-service', 'restart'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    _run_helper(['sensor-service', 'restart'])
             else:
                 act = ['enable', '--now'] if active else ['disable', '--now']
                 subprocess.run(['/usr/bin/systemctl', *act, SYSTEM_SENSOR], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -860,7 +933,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _safe_reset(self, _btn) -> None:
         helper = pathlib.Path('/usr/local/lib/ff-power-manager/ff-power-helper')
         if helper.exists() and os.geteuid() != 0:
-            subprocess.run(['pkexec', str(helper), 'sensor-service', 'stop'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _run_helper(['sensor-service', 'stop'])
         else:
             subprocess.run(['/usr/bin/systemctl', 'stop', SYSTEM_SENSOR], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['/usr/bin/systemctl', '--user', 'stop', USER_PRESENCE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

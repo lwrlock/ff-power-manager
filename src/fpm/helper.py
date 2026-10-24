@@ -189,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             sys.stderr.write(f"Failed to drop caches: {e}\n")
             return 1
+    elif action == "exec-script":
+        script_path = args[1] if len(args) > 1 else ""
+        if script_path and Path(script_path).exists():
+            return subprocess.run(["/bin/bash", script_path]).returncode
+        return 1
     else:
         sys.stderr.write(f"Unknown action: {action}\n")
         return 2

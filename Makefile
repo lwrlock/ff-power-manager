@@ -29,7 +29,7 @@ test_native: $(NATIVE_DIR)/test_native.c $(NATIVE_DIR)/sensor_asm.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 compile:
-	python3 -m py_compile src/fpm/*.py
+	/usr/bin/python3 -m py_compile src/fpm/*.py
 
 test: test-native test-python
 
@@ -37,7 +37,7 @@ test-native: test_native
 	./test_native
 
 test-python:
-	PYTHONPATH=src python3 -m unittest discover -s tests -v
+	PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -v
 
 install: build
 	./install.sh

@@ -3,12 +3,9 @@
   "description": "Real-time battery power draw (W), Lenovo 80% conservation toggle, ToF presence status, and quick profile switcher for FF Power Manager.",
   "uuid": "ff-power-indicator@furkan.github.io",
   "shell-version": [
-    "45",
-    "46",
-    "47",
-    "48",
-    "49",
-    "50"
+    "42",
+    "43",
+    "44"
   ],
   "url": "https://github.com/lwrlock/ff-power-manager",
   "version": 1
