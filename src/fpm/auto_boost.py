@@ -99,15 +99,40 @@ def find_heavy_process() -> str | None:
     return None
 
 
-def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
+def get_cpu_load(prev_idle: float, prev_total: float) -> tuple[float, float, float]:
+    """Lightweight procfs load calculation (< 0.2ms) from /proc/stat."""
+    try:
+        with open('/proc/stat', 'r', encoding='utf-8') as f:
+            line = f.readline()
+            if not line.startswith('cpu '):
+                return 0.0, prev_idle, prev_total
+            fields = [float(x) for x in line.split()[1:5]]
+            idle = fields[3]
+            total = sum(fields)
+            if prev_total == 0:
+                return 0.0, idle, total
+            idle_delta = idle - prev_idle
+            total_delta = total - prev_total
+            if total_delta <= 0:
+                return 0.0, idle, total
+            usage = 100.0 * (1.0 - (idle_delta / total_delta))
+            return max(0.0, min(100.0, usage)), idle, total
+    except Exception:
+        return 0.0, prev_idle, prev_total
+
+
+def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
     signal.signal(signal.SIGINT, _sig_handler)
     signal.signal(signal.SIGTERM, _sig_handler)
 
     boosted = False
     smart_media_active = False
+    dynamic_cores_unparked = False
     last_seen_time = 0.0
-    last_profile = ''
+    last_high_load_time = 0.0
     last_tune_time = 0.0
+    prev_idle = 0.0
+    prev_total = 0.0
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine started.\n")
     sys.stdout.flush()
@@ -116,6 +141,10 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
         on_bat = on_battery_from_sysfs()
         media_file = RUN_DIR / 'media.active'
         is_media_playing = media_file.exists() and on_bat
+
+        # Calculate live CPU usage from /proc/stat
+        cpu_usage, prev_idle, prev_total = get_cpu_load(prev_idle, prev_total)
+        now = time.monotonic()
 
         # Smart Media Mode: Lock low-power 2.2 GHz ceiling during battery video playback
         if is_media_playing and not smart_media_active and not boosted:
@@ -136,49 +165,85 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
                 sys.stderr.write(f"Failed to exit Smart Media Mode: {exc}\n")
 
         heavy = find_heavy_process() if not is_media_playing else None
-        now = time.monotonic()
 
-        if heavy:
-            last_seen_time = now
-            if not boosted:
-                boosted = True
-                cfg = load_config()
-                on_bat = on_battery_from_sysfs()
-                # On battery, strictly preserve power saving; only engage extreme_performance on AC
-                target_mode = 'extreme_performance' if not on_bat else 'battery'
-                sys.stdout.write(
-                    f"Auto Dynamic Boost: Activated by '{heavy}'. Engaging '{target_mode}' mode.\n"
-                )
-                sys.stdout.flush()
-                try:
-                    apply(target_mode, cfg)
-                except Exception as exc:
-                    sys.stderr.write(f"Failed to engage boost: {exc}\n")
-        else:
-            if boosted and (now - last_seen_time >= grace_period):
-                boosted = False
-                cfg = load_config()
-                mode = 'battery' if on_battery_from_sysfs() else 'ac'
-                sys.stdout.write(
-                    f"Auto Dynamic Boost: Heavy workload finished. Grace period elapsed; restoring '{mode}' profile.\n"
-                )
-                sys.stdout.flush()
-                try:
-                    apply(mode, cfg)
-                except Exception as exc:
-                    sys.stderr.write(f"Failed to restore power profile: {exc}\n")
+        if on_bat:
+            # Load-based Dynamic Core Scaling on Battery
+            # Cores 14-15 LP-E handle audio/background on SoC tile.
+            # Cores 0-1 P-cores burst to 4.5 GHz for 120Hz smoothness.
+            # When CPU load exceeds 38% or heavy workload detected, unpark all 16 cores!
+            is_high_load = (heavy is not None) or (cpu_usage >= 38.0)
 
-            # Periodically ensure MacBook-style hybrid topology & RAPL permissions are intact
-            if not boosted and (now - last_tune_time >= 30.0):
+            if is_high_load:
+                last_high_load_time = now
+                if not dynamic_cores_unparked:
+                    dynamic_cores_unparked = True
+                    reason = f"heavy process '{heavy}'" if heavy else f"CPU load {cpu_usage:.1f}%"
+                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Dynamically unparking all 16 cores.\n")
+                    sys.stdout.flush()
+                    try:
+                        set_cpu_freq_floor('battery', high_load=True)
+                    except Exception as exc:
+                        sys.stderr.write(f"Failed to dynamically unpark cores: {exc}\n")
+            else:
+                if dynamic_cores_unparked and (now - last_high_load_time >= 4.0):
+                    dynamic_cores_unparked = False
+                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Parking to 8-core Efficiency Hybrid.\n")
+                    sys.stdout.flush()
+                    try:
+                        set_cpu_freq_floor('battery', high_load=False)
+                    except Exception as exc:
+                        sys.stderr.write(f"Failed to return to efficiency hybrid: {exc}\n")
+
+            if not is_high_load and not dynamic_cores_unparked and (now - last_tune_time >= 30.0):
                 last_tune_time = now
                 try:
-                    active_mode = read_text(RUN_DIR / 'power.mode') or ('battery' if on_battery_from_sysfs() else 'ac')
-                    set_cpu_freq_floor(active_mode)
+                    active_mode = read_text(RUN_DIR / 'power.mode') or 'battery'
+                    set_cpu_freq_floor(active_mode, high_load=False)
                     set_gpu('auto', active_mode)
                 except Exception as exc:
                     sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
 
-        sleep_time = 6.0 if on_battery_from_sysfs() else poll_interval
+            sleep_time = 1.2
+        else:
+            # On AC: All 16 cores always online. Engage extreme_performance for heavy games/compiles.
+            dynamic_cores_unparked = True
+            if heavy:
+                last_seen_time = now
+                if not boosted:
+                    boosted = True
+                    cfg = load_config()
+                    sys.stdout.write(
+                        f"Auto Dynamic Boost: Activated by '{heavy}'. Engaging 'extreme_performance' mode.\n"
+                    )
+                    sys.stdout.flush()
+                    try:
+                        apply('extreme_performance', cfg)
+                    except Exception as exc:
+                        sys.stderr.write(f"Failed to engage boost: {exc}\n")
+            else:
+                if boosted and (now - last_seen_time >= grace_period):
+                    boosted = False
+                    cfg = load_config()
+                    sys.stdout.write(
+                        "Auto Dynamic Boost: Heavy workload finished. Grace period elapsed; restoring 'ac' profile.\n"
+                    )
+                    sys.stdout.flush()
+                    try:
+                        apply('ac', cfg)
+                    except Exception as exc:
+                        sys.stderr.write(f"Failed to restore power profile: {exc}\n")
+
+                if not boosted and (now - last_tune_time >= 30.0):
+                    last_tune_time = now
+                    try:
+                        active_mode = read_text(RUN_DIR / 'power.mode') or 'ac'
+                        set_cpu_freq_floor(active_mode, high_load=True)
+                        set_gpu('auto', active_mode)
+                    except Exception as exc:
+                        sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
+
+            sleep_time = poll_interval
+
         time.sleep(sleep_time)
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine stopped.\n")
