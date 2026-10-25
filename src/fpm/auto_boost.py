@@ -6,7 +6,16 @@ import signal
 import sys
 import time
 
-from .core import apply, load_config, on_battery_from_sysfs
+from .core import (
+    apply,
+    load_config,
+    on_battery_from_sysfs,
+    set_smart_media_mode,
+    set_cpu_freq_floor,
+    set_gpu,
+    read_text,
+    RUN_DIR,
+)
 
 HEAVY_PROCESSES = {
     # Gaming & Wine / Proton
@@ -95,6 +104,7 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
     signal.signal(signal.SIGTERM, _sig_handler)
 
     boosted = False
+    smart_media_active = False
     last_seen_time = 0.0
     last_profile = ''
     last_tune_time = 0.0
@@ -103,7 +113,29 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
     sys.stdout.flush()
 
     while _running:
-        heavy = find_heavy_process()
+        on_bat = on_battery_from_sysfs()
+        media_file = RUN_DIR / 'media.active'
+        is_media_playing = media_file.exists() and on_bat
+
+        # Smart Media Mode: Lock low-power 2.2 GHz ceiling during battery video playback
+        if is_media_playing and not smart_media_active and not boosted:
+            smart_media_active = True
+            try:
+                set_smart_media_mode(True)
+                sys.stdout.write("Auto Dynamic Boost: Smart Media Video Mode engaged (capping 2.2 GHz on battery).\n")
+                sys.stdout.flush()
+            except Exception as exc:
+                sys.stderr.write(f"Failed to engage Smart Media Mode: {exc}\n")
+        elif not is_media_playing and smart_media_active:
+            smart_media_active = False
+            try:
+                set_smart_media_mode(False)
+                sys.stdout.write("Auto Dynamic Boost: Media playback stopped. Restoring standard topology.\n")
+                sys.stdout.flush()
+            except Exception as exc:
+                sys.stderr.write(f"Failed to exit Smart Media Mode: {exc}\n")
+
+        heavy = find_heavy_process() if not is_media_playing else None
         now = time.monotonic()
 
         if heavy:
@@ -140,7 +172,6 @@ def run_watcher(poll_interval: float = 2.5, grace_period: float = 5.0) -> None:
             if not boosted and (now - last_tune_time >= 30.0):
                 last_tune_time = now
                 try:
-                    from .core import set_cpu_freq_floor, set_gpu, RUN_DIR, read_text
                     active_mode = read_text(RUN_DIR / 'power.mode') or ('battery' if on_battery_from_sysfs() else 'ac')
                     set_cpu_freq_floor(active_mode)
                     set_gpu('auto', active_mode)

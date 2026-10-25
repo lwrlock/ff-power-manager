@@ -438,6 +438,9 @@ static void print_status(void) {
            strcmp(online_cores, "0-15") == 0 ? "16/16 All-Core Active" : "MacBook Hybrid Active",
            online_cores, p_max_ghz);
     printf("  Display Refresh Rate  : %s\n", refresh);
+    if (access("/run/ff-power-manager/media.state", F_OK) == 0 || access("/run/ff-power-manager/media.active", F_OK) == 0) {
+        printf("  Smart Media Mode      : %s\n", COLOR_GREEN "Active (60 Hz Low-Power Video Playback)" COLOR_RESET);
+    }
     printf("  CPU EPP Policy        : %s\n", epp);
     printf("  Intel Turbo Boost     : %s\n", turbo_str);
     printf("  PCIe ASPM Policy      : %s\n", aspm);

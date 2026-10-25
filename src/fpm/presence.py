@@ -118,6 +118,22 @@ class PresenceController:
             self._last_checked_mode = mode
             self._update_refresh_rate(mode)
 
+        # Smart Media Tracking: Broadcast media state for low-power video playback
+        media_active = self._is_media_active()
+        if media_active != getattr(self, '_last_media_active', None):
+            self._last_media_active = media_active
+            try:
+                media_file = RUN_DIR / 'media.active'
+                if media_active:
+                    media_file.write_text('playing\n')
+                    if on_battery_from_sysfs():
+                        self._update_refresh_rate('battery')
+                else:
+                    if media_file.exists():
+                        media_file.unlink()
+            except Exception:
+                pass
+
         if not self.cfg.get('oled_screen_care', False):
             if self.is_dimmed:
                 self._set_dimming(False)
