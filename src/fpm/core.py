@@ -560,7 +560,7 @@ def optimize_sd_card() -> None:
 
 def apply_kernel_tunings(mode: str) -> None:
     if mode in ('battery', 'max_battery', 'maximum_battery'):
-        write_if_changed('/proc/sys/vm/laptop_mode', '5')
+        pass # vm.laptop_mode deprecated in Linux 6.12+
         write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '6000')
         write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '12000')
         write_if_changed('/proc/sys/vm/dirty_ratio', '20')
@@ -570,7 +570,7 @@ def apply_kernel_tunings(mode: str) -> None:
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'med_power_with_dipm')
     else:
-        write_if_changed('/proc/sys/vm/laptop_mode', '0')
+        pass # vm.laptop_mode deprecated in Linux 6.12+
         write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '1500')
         write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '3000')
         write_if_changed('/proc/sys/vm/dirty_ratio', '20')
