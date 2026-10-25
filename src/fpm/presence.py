@@ -24,8 +24,8 @@ DEFAULT = {
     'auto_refresh_rate': True,
     'promotion_120hz': True,
     'force_120hz_on_battery': True,
-    'oled_screen_care': True,
-    'oled_dim_inactive_sec': 45,
+    'oled_screen_care': False,
+    'oled_dim_inactive_sec': 0,
     'inhibit_on_media': True,
 }
 
@@ -52,12 +52,12 @@ def load_config() -> dict:
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
     out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', False))
     out['screen_off_on_away'] = bool(out.get('screen_off_on_away', True))
-    out['oled_screen_care'] = bool(out.get('oled_screen_care', True))
+    out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
     out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
     try:
-        out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 45))))
+        out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 0))))
     except Exception:
-        out['oled_dim_inactive_sec'] = 45
+        out['oled_dim_inactive_sec'] = 0
     return out
 
 
@@ -197,12 +197,6 @@ class PresenceController:
             if self.is_dimmed:
                 self._set_dimming(False)
                 self.is_dimmed = False
-            # Ensure backlight is never stuck at 0
-            try:
-                if BACKLIGHT_PATH.exists() and int(BACKLIGHT_PATH.read_text().strip()) == 0:
-                    BACKLIGHT_PATH.write_text('220')
-            except Exception:
-                pass
             # 1. Wake Mutter KMS display controller first
             try:
                 self.session.call_sync(
