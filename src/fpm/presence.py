@@ -23,7 +23,7 @@ DEFAULT = {
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
-    'force_120hz_on_battery': False,
+    'force_120hz_on_battery': True,
     'oled_screen_care': True,
     'oled_dim_inactive_sec': 45,
     'inhibit_on_media': True,
