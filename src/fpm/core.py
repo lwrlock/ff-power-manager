@@ -597,27 +597,40 @@ def apply_kernel_tunings(mode: str) -> None:
 
 
 def set_smart_media_mode(active: bool) -> None:
-    """Smart Media Video Mode: When watching video on battery, lock CPU burst ceiling to 2.2 GHz
+    """Smart Media Video Mode: Hardware VA-API 4K/60fps playback without stutter
 
-    Hardware VA-API decodes 4K/60fps video on the Intel Xe GPU at negligible power.
-    Capping CPU scaling ceiling during video prevents burst spikes to 4+ GHz, cutting
-    video playback power consumption from ~13W down to 5-6W!
+    Hardware VA-API decodes 4K/60fps video on the Intel Xe Media Engine (gt1).
+    Maintains balanced responsiveness (3.6 GHz burst ceiling, balance_power EPP)
+    so 4K frames and 120Hz compositor never drop frames, while preventing
+    unnecessary 5+ GHz turbo spikes on battery.
     """
     on_bat = on_battery_from_sysfs()
     state_file = RUN_DIR / 'media.state'
     if active and on_bat:
-        # Lion Cove P-cores (0..1) capped to 2.2 GHz
-        write_if_changed('/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq', '2200000')
-        write_if_changed('/sys/devices/system/cpu/cpu1/cpufreq/scaling_max_freq', '2200000')
-        # Skymont E-cores (6..9) capped to 2.0 GHz
-        for c in (6, 7, 8, 9):
-            write_if_changed(f'/sys/devices/system/cpu/cpu{c}/cpufreq/scaling_max_freq', '2000000')
-        # Low-Power Island E-cores (14..15) capped to 1.6 GHz
+        # P-cores (0..5): 3.6 GHz burst ceiling with responsive balance_power (EPB 6)
+        for c in range(6):
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '3600000')
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '6')
+        # E-cores (6..13): 2.6 GHz ceiling
+        for c in range(6, 14):
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '2600000')
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '8')
+        # Low-Power Island E-cores (14..15)
         for c in (14, 15):
-            write_if_changed(f'/sys/devices/system/cpu/cpu{c}/cpufreq/scaling_max_freq', '1600000')
-        for c in (0, 1, 6, 7, 8, 9, 14, 15):
-            write_if_changed(f'/sys/devices/system/cpu/cpu{c}/cpufreq/energy_performance_preference', 'power')
-            write_if_changed(f'/sys/devices/system/cpu/cpu{c}/power/energy_perf_bias', '15')
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '1800000')
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '12')
+        # Ensure Media Engine (gt1) has responsive floor for 4K 60fps decode
+        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt1/freq0/min_freq', '600')
+        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0/min_freq', '600')
         try:
             state_file.write_text('active\n')
         except Exception:
@@ -625,6 +638,7 @@ def set_smart_media_mode(active: bool) -> None:
     else:
         mode = 'battery' if on_bat else 'ac'
         set_macbook_hybrid_topology(mode)
+        set_gpu('auto', mode)
         try:
             if state_file.exists():
                 state_file.unlink()
