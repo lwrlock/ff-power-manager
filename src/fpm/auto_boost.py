@@ -167,32 +167,30 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
         heavy = find_heavy_process() if not is_media_playing else None
 
         if on_bat:
-            # Load-based Dynamic Core Scaling on Battery
-            # Cores 14-15 LP-E handle audio/background on SoC tile.
-            # Cores 0-1 P-cores burst to 4.5 GHz for 120Hz smoothness.
-            # When CPU load exceeds 38% or heavy workload detected, unpark all 16 cores!
-            is_high_load = (heavy is not None) or (cpu_usage >= 38.0)
+            # Dynamic Responsiveness on Battery: All 16 cores remain online.
+            # Idle cores enter C6/C10 autonomously (0W). No stop_machine() hotplug freezes!
+            is_high_load = (heavy is not None) or (cpu_usage >= 45.0)
 
             if is_high_load:
                 last_high_load_time = now
                 if not dynamic_cores_unparked:
                     dynamic_cores_unparked = True
                     reason = f"heavy process '{heavy}'" if heavy else f"CPU load {cpu_usage:.1f}%"
-                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Dynamically unparking all 16 cores.\n")
+                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Boosting P-core burst frequencies.\n")
                     sys.stdout.flush()
                     try:
                         set_cpu_freq_floor('battery', high_load=True)
                     except Exception as exc:
-                        sys.stderr.write(f"Failed to dynamically unpark cores: {exc}\n")
+                        sys.stderr.write(f"Failed to engage high load boost: {exc}\n")
             else:
-                if dynamic_cores_unparked and (now - last_high_load_time >= 4.0):
+                if dynamic_cores_unparked and (now - last_high_load_time >= 5.0):
                     dynamic_cores_unparked = False
-                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Parking to 8-core Efficiency Hybrid.\n")
+                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Restoring ProMotion battery caps.\n")
                     sys.stdout.flush()
                     try:
                         set_cpu_freq_floor('battery', high_load=False)
                     except Exception as exc:
-                        sys.stderr.write(f"Failed to return to efficiency hybrid: {exc}\n")
+                        sys.stderr.write(f"Failed to return to battery profile: {exc}\n")
 
             if not is_high_load and not dynamic_cores_unparked and (now - last_tune_time >= 30.0):
                 last_tune_time = now
