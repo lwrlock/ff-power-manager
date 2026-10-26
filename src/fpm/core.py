@@ -432,10 +432,15 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
     write_if_changed('/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost', '1')
     write_if_changed('/sys/devices/system/cpu/intel_pstate/no_turbo', '0' if not is_max_bat else '1')
 
+    # Force Intel Xe hardware PSR1 on Samsung 2.8K OLED (saves ~2.5W display memory traffic)
+    for psr_debug in glob.glob('/sys/kernel/debug/dri/*/i915_edp_psr_debug'):
+        write_if_changed(psr_debug, '2')
+
     for c in sorted(online_cores):
         cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
-        write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
         if c <= 5:
+            # P-cores: 800 MHz floor for instantaneous 0.1ms 120Hz VSync response without waiting for frequency ramp
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
             if is_max_bat:
                 p_epp, p_epb = 'power', '15'
@@ -443,15 +448,17 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
                 p_epp, p_epb = 'balance_power', '8'
             else:
                 p_epp = 'balance_power' if on_bat else 'balance_performance'
-                p_epb = '6'
+                p_epb = '5' if on_bat else '4'
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', p_epb)
         elif c <= 13:
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else 'balance_power')
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else '6')
         else:
             # Low-Power Skymont Island (cores 14, 15 on SoC tile)
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', lpe_max)
             if is_max_bat:
                 write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
@@ -501,9 +508,9 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
             elif is_max_bat:
                 target_max = '800' if is_gt1 else '800'
             else:
-                # Balanced mode: 3D GPU (gt0) capped at 1000 MHz (AC) / 800 MHz (battery); Media Engine (gt1) at 900 MHz.
-                # Easily scales 4K 60fps video while keeping GPU power under ~1.5W instead of 6-7W at 2000MHz!
-                target_max = '900' if is_gt1 else ('800' if on_bat else '1000')
+                # Balanced mode: 3D GPU (gt0) dynamic burst up to 1600 MHz (battery) / 1800 MHz (AC)
+                # for liquid-smooth 120Hz ProMotion without frame drops, while staying at 800 MHz in idle.
+                target_max = '1200' if is_gt1 else ('1600' if on_bat else '1800')
             write_if_changed(max_node, target_max)
 
     # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6 legacy i915 nodes)
