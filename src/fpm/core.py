@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
         'gnome_profile': 'balanced',
         'epp': 'balance_power',
         'turbo': True,
-        'wifi_power_save': True,
+        'wifi_power_save': False,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
         'pcie_aspm': 'powersupersave',
@@ -32,7 +32,7 @@ DEFAULT_CONFIG = {
         'gnome_profile': 'balanced',
         'epp': 'balance_performance',
         'turbo': True,
-        'wifi_power_save': True,
+        'wifi_power_save': False,
         'nvme_runtime_pm': 'auto',
         'gpu_runtime_pm': 'auto',
         'pcie_aspm': 'powersave',
@@ -67,7 +67,7 @@ PRESETS = {
             'gnome_profile': 'balanced',
             'epp': 'balance_power',
             'turbo': True,
-            'wifi_power_save': True,
+            'wifi_power_save': False,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
             'pcie_aspm': 'powersave',
@@ -79,7 +79,7 @@ PRESETS = {
             'gnome_profile': 'power-saver',
             'epp': 'power',
             'turbo': False,
-            'wifi_power_save': True,
+            'wifi_power_save': False,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
             'pcie_aspm': 'powersupersave',
@@ -118,7 +118,7 @@ PRESETS = {
             'gnome_profile': 'balanced',
             'epp': 'balance_power',
             'turbo': False,
-            'wifi_power_save': True,
+            'wifi_power_save': False,
             'nvme_runtime_pm': 'auto',
             'gpu_runtime_pm': 'auto',
             'pcie_aspm': 'default',
@@ -333,6 +333,10 @@ def set_wifi_ps(value: bool | str) -> None:
         return
     want = 'on' if value else 'off'
     for iface in wifi_ifaces():
+        # Intel BE200 / iwlwifi Wi-Fi 7 chips throttle to 6 Mbps when 802.11 power_save is enabled in software.
+        driver_path = f'/sys/class/net/{iface}/device/driver'
+        if os.path.exists(driver_path) and os.path.basename(os.readlink(driver_path)) == 'iwlwifi':
+            want = 'off'
         if wifi_ps_current(iface) != want:
             run(['/usr/sbin/iw', 'dev', iface, 'set', 'power_save', want])
 
