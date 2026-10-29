@@ -357,6 +357,10 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
         # Let set_gpu manage graphics controllers (class 0x03xxxx)
         if cls.startswith('0x03'):
             continue
+        # Keep USB host controllers (class 0x0c03xx) on to prevent Intel BE200 Bluetooth & USB sleep drops
+        if cls.startswith('0x0c03'):
+            write_if_changed(ctrl, 'on')
+            continue
         write_if_changed(ctrl, 'auto')
 
 
@@ -554,6 +558,9 @@ def set_usb(value: str) -> None:
         # Intel Bluetooth (8087) must NEVER be autosuspended, otherwise firmware drops off USB bus
         if vendor == '8087':
             write_if_changed(p, 'on')
+            delay_node = os.path.join(dev_path, 'power/autosuspend_delay_ms')
+            if os.path.exists(delay_node):
+                write_if_changed(delay_node, '-1')
             continue
         # Never autosuspend USB Human Interface Devices (mice, keyboards, 2.4GHz wireless dongles)
         is_hid = False
