@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
         'turbo': True,
         'wifi_power_save': False,
         'nvme_runtime_pm': 'auto',
-        'gpu_runtime_pm': 'auto',
+        'gpu_runtime_pm': 'on',
         'pcie_aspm': 'powersupersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
@@ -34,7 +34,7 @@ DEFAULT_CONFIG = {
         'turbo': True,
         'wifi_power_save': False,
         'nvme_runtime_pm': 'auto',
-        'gpu_runtime_pm': 'auto',
+        'gpu_runtime_pm': 'on',
         'pcie_aspm': 'powersave',
         'usb_autosuspend': 'auto',
         'audio_powersave': 'on',
@@ -69,7 +69,7 @@ PRESETS = {
             'turbo': True,
             'wifi_power_save': False,
             'nvme_runtime_pm': 'auto',
-            'gpu_runtime_pm': 'auto',
+            'gpu_runtime_pm': 'on',
             'pcie_aspm': 'powersave',
             'usb_autosuspend': 'auto',
             'audio_powersave': 'on',
@@ -81,7 +81,7 @@ PRESETS = {
             'turbo': False,
             'wifi_power_save': False,
             'nvme_runtime_pm': 'auto',
-            'gpu_runtime_pm': 'auto',
+            'gpu_runtime_pm': 'on',
             'pcie_aspm': 'powersupersave',
             'usb_autosuspend': 'auto',
             'audio_powersave': 'on',
@@ -120,7 +120,7 @@ PRESETS = {
             'turbo': False,
             'wifi_power_save': False,
             'nvme_runtime_pm': 'auto',
-            'gpu_runtime_pm': 'auto',
+            'gpu_runtime_pm': 'on',
             'pcie_aspm': 'default',
             'usb_autosuspend': 'system',
             'audio_powersave': 'on',
@@ -278,7 +278,7 @@ def set_profile(value: str) -> None:
         return
     if command_output(['/usr/bin/powerprofilesctl', 'get']) != value:
         run(['/usr/bin/powerprofilesctl', 'set', value])
-        time.sleep(0.12)
+        time.sleep(0.3)
 
 
 def set_epp(value: str) -> None:
@@ -452,8 +452,8 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
         elif c <= 13:
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
-            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else 'balance_power')
-            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else '7')
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else ('balance_performance' if not on_bat else 'balance_power'))
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('4' if not on_bat else '7'))
         else:
             # Low-Power Skymont Island (cores 14, 15 on SoC tile)
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
@@ -462,7 +462,7 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
                 write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
                 write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
             else:
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if on_bat else 'balance_power')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if on_bat else 'balance_performance')
                 write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '11' if on_bat else '6')
 
 
@@ -475,7 +475,9 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
         vendor = read_text(os.path.join(dev, 'vendor'))
         cls = read_text(os.path.join(dev, 'class'))
         if vendor == '0x8086' and cls and cls.startswith('0x03'):
-            write_if_changed(os.path.join(dev, 'power/control'), 'auto' if value == 'system' else value)
+            # The primary display adapter (Intel Xe iGPU) must NEVER have PCIe link autosuspended.
+            # Internal hardware GT RC6 sleep handles zero-power idle automatically at 0 MHz.
+            write_if_changed(os.path.join(dev, 'power/control'), 'on')
 
     on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
     is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
@@ -552,8 +554,17 @@ def set_usb(value: str) -> None:
         # Intel Bluetooth (8087) must NEVER be autosuspended, otherwise firmware drops off USB bus
         if vendor == '8087':
             write_if_changed(p, 'on')
-        else:
-            write_if_changed(p, 'auto')
+            continue
+        # Never autosuspend USB Human Interface Devices (mice, keyboards, 2.4GHz wireless dongles)
+        is_hid = False
+        for iface_dir in glob.glob(os.path.join(dev_path, '*:*.*/bInterfaceClass')):
+            if read_text(iface_dir) == '03':
+                is_hid = True
+                break
+        if is_hid:
+            write_if_changed(p, 'on')
+            continue
+        write_if_changed(p, 'auto')
 
 
 def set_audio(value: str) -> None:
