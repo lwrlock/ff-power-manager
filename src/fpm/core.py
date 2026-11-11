@@ -613,9 +613,60 @@ def apply_kernel_tunings(mode: str) -> None:
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
-    # Keep VFS directory/inode and page cache warm in 32GB RAM for instant app launches
+    # MacBook Pro-grade low-latency scheduler, VM & NVMe responsiveness tunings
+    write_if_changed('/proc/sys/kernel/sched_autogroup_enabled', '1')
     write_if_changed('/proc/sys/vm/vfs_cache_pressure', '50')
     write_if_changed('/proc/sys/vm/swappiness', '10')
+    write_if_changed('/proc/sys/vm/compaction_proactiveness', '0')
+    write_if_changed('/proc/sys/vm/watermark_boost_factor', '0')
+    write_if_changed('/proc/sys/vm/watermark_scale_factor', '125')
+    write_if_changed('/proc/sys/vm/page-cluster', '0')
+    for q_dir in glob.glob('/sys/block/nvme*/queue'):
+        write_if_changed(os.path.join(q_dir, 'scheduler'), 'none')
+        write_if_changed(os.path.join(q_dir, 'rq_affinity'), '2')
+        write_if_changed(os.path.join(q_dir, 'read_ahead_kb'), '256')
+        write_if_changed(os.path.join(q_dir, 'iostats'), '0')
+
+
+INTERACTIVE_QOS_PROCESSES = {
+    'gnome-shell': -10,
+    'mutter': -10,
+    'xwayland': -10,
+    'antigravity': -8,
+    'language_server': -8,
+    'pipewire': -11,
+    'pipewire-pulse': -11,
+    'wireplumber': -11,
+}
+
+BACKGROUND_QOS_PROCESSES = {
+    'llama-server': 5,
+    'tracker-miner-f': 15,
+    'packagekitd': 10,
+    'updatedb': 15,
+}
+
+
+def optimize_desktop_responsiveness() -> None:
+    """Apply MacBook-style QoS CPU scheduling priorities to foreground UI/IDE vs background tasks."""
+    for comm_path in glob.glob('/proc/[0-9]*/comm'):
+        try:
+            with open(comm_path, 'r', encoding='utf-8', errors='ignore') as f:
+                name = f.read().strip().lower()
+            if not name:
+                continue
+            target_nice = INTERACTIVE_QOS_PROCESSES.get(name)
+            if target_nice is None:
+                target_nice = BACKGROUND_QOS_PROCESSES.get(name)
+            if target_nice is None and name.startswith('language_server'):
+                target_nice = -8
+            if target_nice is not None:
+                pid = int(comm_path.split('/')[2])
+                cur_nice = os.getpriority(os.PRIO_PROCESS, pid)
+                if cur_nice != target_nice:
+                    os.setpriority(os.PRIO_PROCESS, pid, target_nice)
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+            continue
 
 
 def set_smart_media_mode(active: bool) -> None:
@@ -709,6 +760,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
         s['pcie_aspm'] = 'performance'
         s['wifi_power_save'] = False
         s['hwp_dynamic_boost'] = 'on'
+        s['gpu_runtime_pm'] = 'auto'
     elif mode == 'battery':
         base_mode = 'battery'
         s = cfg['battery']
@@ -738,6 +790,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     apply_kernel_tunings(base_mode)
     set_rapl_limits(mode)
     optimize_sd_card()
+    optimize_desktop_responsiveness()
 
 
 

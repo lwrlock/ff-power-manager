@@ -7,7 +7,7 @@ Wants=power-profiles-daemon.service
 Type=oneshot
 ExecStart=/usr/local/bin/ffctl apply
 RemainAfterExit=yes
-Nice=10
+Nice=-5
 
 [Install]
 WantedBy=graphical.target

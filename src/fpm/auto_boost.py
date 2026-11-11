@@ -10,6 +10,7 @@ from .core import (
     apply,
     load_config,
     on_battery_from_sysfs,
+    optimize_desktop_responsiveness,
     set_smart_media_mode,
     set_cpu_freq_floor,
     set_gpu,
@@ -52,6 +53,14 @@ HEAVY_PROCESSES = {
     'cargo',
     'make',
     'ninja',
+    # Local AI / LLM CLI Runners
+    'llama-cli',
+    'llama-bench',
+}
+
+# Processes that stay resident in RAM when idle and should only trigger boost under active CPU/GPU load
+IDLE_AWARE_HEAVY_PROCESSES = {
+    'llama-server',
 }
 
 KNOWN_GAMES = {
@@ -80,7 +89,7 @@ def _sig_handler(signum, frame):
     _running = False
 
 
-def find_heavy_process() -> str | None:
+def find_heavy_process(cpu_usage: float = 0.0) -> str | None:
     """Lightweight procfs scanner (< 15ms) to identify running heavy workloads and games."""
     for comm_path in glob.glob('/proc/[0-9]*/comm'):
         try:
@@ -89,6 +98,8 @@ def find_heavy_process() -> str | None:
                 if not name:
                     continue
                 if name in HEAVY_PROCESSES or name in KNOWN_GAMES:
+                    return name
+                if name in IDLE_AWARE_HEAVY_PROCESSES and cpu_usage >= 15.0:
                     return name
                 # Windows games running via Wine/Proton (.exe or truncated to 15 chars e.g. .e)
                 if name.endswith('.exe') or name.endswith('.e') or '.exe' in name:
@@ -164,7 +175,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
             except Exception as exc:
                 sys.stderr.write(f"Failed to exit Smart Media Mode: {exc}\n")
 
-        heavy = find_heavy_process() if not is_media_playing else None
+        heavy = find_heavy_process(cpu_usage) if not is_media_playing else None
 
         if on_bat:
             # Dynamic Responsiveness on Battery: All 16 cores remain online.
@@ -198,6 +209,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                     active_mode = read_text(RUN_DIR / 'power.mode') or 'battery'
                     set_cpu_freq_floor(active_mode, high_load=False)
                     set_gpu('auto', active_mode)
+                    optimize_desktop_responsiveness()
                 except Exception as exc:
                     sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
 
@@ -237,6 +249,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                         active_mode = read_text(RUN_DIR / 'power.mode') or 'ac'
                         set_cpu_freq_floor(active_mode, high_load=True)
                         set_gpu('auto', active_mode)
+                        optimize_desktop_responsiveness()
                     except Exception as exc:
                         sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
 

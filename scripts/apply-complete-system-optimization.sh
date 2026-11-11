@@ -93,16 +93,29 @@ zram-size = ram / 2
 compression-algorithm = zstd
 EOF
 
-# 5. Kernel TCP BBR # 5. Çekirdek TCP BBR ve VFS Önbellek İyileştirmesi VFS Cache Optimization
+# 5. Kernel TCP BBR, Scheduler Autogroup & Low-Latency VM Cache Optimization
 cat <<'EOF' > /etc/sysctl.d/99-ff-system-tuning.conf
-# High performance networking and snappy desktop caching
+# High performance networking and MacBook Pro-grade low-latency desktop caching
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
+kernel.sched_autogroup_enabled = 1
 vm.vfs_cache_pressure = 50
+vm.swappiness = 10
+vm.compaction_proactiveness = 0
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
 vm.max_map_count = 2147483642
 fs.file-max = 2097152
+fs.inotify.max_user_watches = 1048576
+fs.inotify.max_user_instances = 1024
 EOF
 sysctl --system >/dev/null 2>&1 || true
+
+# 5b. NVMe Multi-Queue Low-Latency I/O Rules
+cat <<'EOF' > /etc/udev/rules.d/99-nvme-io.rules
+ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none", ATTR{queue/rq_affinity}="2", ATTR{queue/read_ahead_kb}="256", ATTR{queue/iostats}="0"
+EOF
 
 # 6. Hardware Video Acceleration (VA-API Intel iHD Driver)
 if ! grep -q "LIBVA_DRIVER_NAME=iHD" /etc/environment 2>/dev/null; then

@@ -143,6 +143,24 @@ class ConfigTests(unittest.TestCase):
         detected = auto_boost.find_heavy_process()
         self.assertEqual(detected, 'cyberpunk2077.e')
 
+    @mock.patch('glob.glob')
+    @mock.patch('builtins.open', new_callable=mock.mock_open, read_data='llama-server\n')
+    def test_auto_boost_idle_aware_llama_server(self, mock_file, mock_glob):
+        from fpm import auto_boost
+        mock_glob.return_value = ['/proc/54321/comm']
+        # Idle llama-server (<15% CPU) must NOT lock extreme_performance
+        self.assertIsNone(auto_boost.find_heavy_process(cpu_usage=2.5))
+        # Active llama-server (>=15% CPU) triggers boost
+        self.assertEqual(auto_boost.find_heavy_process(cpu_usage=42.0), 'llama-server')
+
+    @mock.patch('os.setpriority')
+    @mock.patch('os.getpriority', return_value=0)
+    @mock.patch('fpm.core.glob.glob', return_value=['/proc/3684/comm'])
+    @mock.patch('builtins.open', new_callable=mock.mock_open, read_data='antigravity\n')
+    def test_optimize_desktop_responsiveness(self, mock_file, mock_glob, mock_getprio, mock_setprio):
+        core.optimize_desktop_responsiveness()
+        mock_setprio.assert_called_once_with(core.os.PRIO_PROCESS, 3684, -8)
+
     def test_presence_config_includes_media_inhibit(self):
         from fpm import presence
         cfg = presence.load_config()
