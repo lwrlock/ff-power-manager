@@ -381,7 +381,7 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
         pass
 
     on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
-    is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
+    is_extreme = mode in ('extreme_performance', 'performance')
     is_max_bat = mode in ('max_battery', 'maximum_battery')
 
     if is_extreme:
@@ -484,7 +484,7 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
             write_if_changed(os.path.join(dev, 'power/control'), 'on')
 
     on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
-    is_extreme = (mode in ('extreme_performance', 'performance')) and not on_bat
+    is_extreme = mode in ('extreme_performance', 'performance')
     is_max_bat = mode in ('max_battery', 'maximum_battery')
 
     # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
@@ -632,6 +632,8 @@ INTERACTIVE_QOS_PROCESSES = {
     'gnome-shell': -10,
     'mutter': -10,
     'xwayland': -10,
+    'llama-server': -10,
+    'ollama': -10,
     'antigravity': -8,
     'language_server': -8,
     'pipewire': -11,
@@ -640,7 +642,6 @@ INTERACTIVE_QOS_PROCESSES = {
 }
 
 BACKGROUND_QOS_PROCESSES = {
-    'llama-server': 5,
     'tracker-miner-f': 15,
     'packagekitd': 10,
     'updatedb': 15,

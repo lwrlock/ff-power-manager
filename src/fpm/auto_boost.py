@@ -53,15 +53,14 @@ HEAVY_PROCESSES = {
     'cargo',
     'make',
     'ninja',
-    # Local AI / LLM CLI Runners
+    # Local AI / LLM CLI & Server Runners (Full CPU + GPU Performance)
+    'llama-server',
     'llama-cli',
     'llama-bench',
 }
 
 # Processes that stay resident in RAM when idle and should only trigger boost under active CPU/GPU load
-IDLE_AWARE_HEAVY_PROCESSES = {
-    'llama-server',
-}
+IDLE_AWARE_HEAVY_PROCESSES: set[str] = set()
 
 KNOWN_GAMES = {
     'cs2',
@@ -187,10 +186,12 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                 if not dynamic_cores_unparked:
                     dynamic_cores_unparked = True
                     reason = f"heavy process '{heavy}'" if heavy else f"CPU load {cpu_usage:.1f}%"
-                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Boosting P-core burst frequencies.\n")
+                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Boosting CPU & GPU frequencies.\n")
                     sys.stdout.flush()
                     try:
-                        set_cpu_freq_floor('battery', high_load=True)
+                        set_cpu_freq_floor('extreme_performance', high_load=True)
+                        set_gpu('auto', 'extreme_performance')
+                        optimize_desktop_responsiveness()
                     except Exception as exc:
                         sys.stderr.write(f"Failed to engage high load boost: {exc}\n")
             else:
@@ -200,6 +201,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                     sys.stdout.flush()
                     try:
                         set_cpu_freq_floor('battery', high_load=False)
+                        set_gpu('auto', 'battery')
                     except Exception as exc:
                         sys.stderr.write(f"Failed to return to battery profile: {exc}\n")
 
