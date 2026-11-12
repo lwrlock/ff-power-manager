@@ -615,14 +615,19 @@ def apply_kernel_tunings(mode: str) -> None:
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
-    # MacBook Pro-grade low-latency scheduler, VM & NVMe responsiveness tunings
+    # MacBook Pro-grade low-latency scheduler, VM, ZRAM & NVMe responsiveness tunings
     write_if_changed('/proc/sys/kernel/sched_autogroup_enabled', '1')
+    write_if_changed('/proc/sys/kernel/split_lock_mitigate', '0')
     write_if_changed('/proc/sys/vm/vfs_cache_pressure', '50')
     write_if_changed('/proc/sys/vm/swappiness', '10')
     write_if_changed('/proc/sys/vm/compaction_proactiveness', '0')
     write_if_changed('/proc/sys/vm/watermark_boost_factor', '0')
     write_if_changed('/proc/sys/vm/watermark_scale_factor', '125')
     write_if_changed('/proc/sys/vm/page-cluster', '0')
+    write_if_changed('/proc/sys/vm/stat_interval', '10')
+    write_if_changed('/sys/kernel/mm/transparent_hugepage/shmem_enabled', 'advise')
+    for zram_ra in glob.glob('/sys/block/zram*/queue/read_ahead_kb'):
+        write_if_changed(zram_ra, '0')
     for q_dir in glob.glob('/sys/block/nvme*/queue'):
         write_if_changed(os.path.join(q_dir, 'scheduler'), 'none')
         write_if_changed(os.path.join(q_dir, 'rq_affinity'), '2')
