@@ -53,14 +53,14 @@ HEAVY_PROCESSES = {
     'cargo',
     'make',
     'ninja',
-    # Local AI / LLM CLI & Server Runners (Full CPU + GPU Performance)
+}
+
+# Processes that stay resident in RAM when idle and should only trigger boost under active CPU/GPU load
+IDLE_AWARE_HEAVY_PROCESSES = {
     'llama-server',
     'llama-cli',
     'llama-bench',
 }
-
-# Processes that stay resident in RAM when idle and should only trigger boost under active CPU/GPU load
-IDLE_AWARE_HEAVY_PROCESSES: set[str] = set()
 
 KNOWN_GAMES = {
     'cs2',
@@ -98,7 +98,7 @@ def find_heavy_process(cpu_usage: float = 0.0) -> str | None:
                     continue
                 if name in HEAVY_PROCESSES or name in KNOWN_GAMES:
                     return name
-                if name in IDLE_AWARE_HEAVY_PROCESSES and cpu_usage >= 15.0:
+                if name in IDLE_AWARE_HEAVY_PROCESSES and cpu_usage >= 10.0:
                     return name
                 # Windows games running via Wine/Proton (.exe or truncated to 15 chars e.g. .e)
                 if name.endswith('.exe') or name.endswith('.e') or '.exe' in name:
@@ -205,7 +205,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                     except Exception as exc:
                         sys.stderr.write(f"Failed to return to battery profile: {exc}\n")
 
-            if not is_high_load and not dynamic_cores_unparked and (now - last_tune_time >= 30.0):
+            if not is_high_load and not dynamic_cores_unparked and (now - last_tune_time >= 120.0):
                 last_tune_time = now
                 try:
                     active_mode = read_text(RUN_DIR / 'power.mode') or 'battery'
@@ -215,7 +215,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                 except Exception as exc:
                     sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
 
-            sleep_time = 1.2
+            sleep_time = 2.5 if (not dynamic_cores_unparked and not is_media_playing) else 1.2
         else:
             # On AC: All 16 cores always online. Engage extreme_performance for heavy games/compiles.
             dynamic_cores_unparked = True
@@ -245,7 +245,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                     except Exception as exc:
                         sys.stderr.write(f"Failed to restore power profile: {exc}\n")
 
-                if not boosted and (now - last_tune_time >= 30.0):
+                if not boosted and (now - last_tune_time >= 120.0):
                     last_tune_time = now
                     try:
                         active_mode = read_text(RUN_DIR / 'power.mode') or 'ac'

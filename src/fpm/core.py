@@ -431,7 +431,7 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
             write_if_changed(online_path, '1')
 
     # Ensure Intel P-State dynamic responsiveness & Turbo burst
-    write_if_changed('/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost', '1')
+    write_if_changed('/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost', '1' if not is_max_bat else '0')
     write_if_changed('/sys/devices/system/cpu/intel_pstate/no_turbo', '0' if not is_max_bat else '1')
 
     # Force Intel Xe hardware PSR1 on Samsung 2.8K OLED (saves ~2.5W display memory traffic)
@@ -441,16 +441,18 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
     for c in sorted(online_cores):
         cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
         if c <= 5:
-            # P-cores: 800 MHz floor + balance_performance for instantaneous 0.05ms 120Hz VSync response
+            # P-cores: 800 MHz floor for instantaneous 120Hz VSync response;
+            # on battery idle use balance_power (EPB 6) with Turbo+HWP-Boost so idle drops fast to 4-5W
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
             if is_max_bat:
                 p_epp, p_epb = 'power', '15'
             elif mode == 'cool_quiet':
                 p_epp, p_epb = 'balance_power', '8'
+            elif on_bat and not high_load:
+                p_epp, p_epb = 'balance_power', '6'
             else:
-                p_epp = 'balance_performance'
-                p_epb = '4'
+                p_epp, p_epb = 'balance_performance', '4'
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', p_epb)
         elif c <= 13:
@@ -501,11 +503,11 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
             elif is_max_bat:
                 target_min = '100' if is_gt1 else '200'
             elif on_bat:
-                # 600 MHz floor for 3D GPU renders 2.8K 120Hz compositor in <4ms (well within 8.33ms VSync budget)
-                # RC6 (gt0-rc) still powers off the GPU completely to 0W when idle.
-                target_min = '400' if is_gt1 else '600'
+                # 600 MHz floor for 3D GPU (gt0) renders 2.8K 120Hz compositor without frame drops;
+                # gt1 media engine rests at hardware 100 MHz RPN until set_smart_media_mode() bumps it.
+                target_min = '100' if is_gt1 else '600'
             else:
-                target_min = '450' if is_gt1 else '600'
+                target_min = '100' if is_gt1 else '600'
             write_if_changed(min_node, target_min)
         max_node = os.path.join(gt_freq, 'max_freq')
         if os.path.exists(max_node):
@@ -724,12 +726,14 @@ def set_rapl_limits(mode: str) -> None:
     # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits (MacBook-style cool & responsive)
     if mode in ('extreme_performance', 'performance'):
         pl1, pl2 = 65000000, 100000000
-    elif mode in ('battery', 'max_battery', 'maximum_battery'):
+    elif mode in ('max_battery', 'maximum_battery'):
         pl1, pl2 = 12000000, 20000000
+    elif mode == 'battery':
+        pl1, pl2 = 15000000, 28000000
     elif mode == 'cool_quiet':
         pl1, pl2 = 18000000, 30000000
-    else:  # ac / balanced optimum (MacBook style: quiet, 35-40°C idle, instant 45W burst)
-        pl1, pl2 = 28000000, 45000000
+    else:  # ac / balanced optimum (quiet idle + crisp sustained boost)
+        pl1, pl2 = 35000000, 55000000
 
     # Set Lenovo IdeaPad ACPI firmware platform_profile to match
     if PLATFORM_PROFILE_PATH.exists():
@@ -779,8 +783,8 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     # Set EPP right after set_profile to ensure power-profiles-daemon cannot override it
     set_epp(s['epp'])
     set_turbo(s['turbo'])
-    set_cpu_freq_floor(mode)
     set_hwp_dynamic_boost(s['hwp_dynamic_boost'])
+    set_cpu_freq_floor(mode)
     set_wifi_ps(s['wifi_power_save'])
     set_nvme(s['nvme_runtime_pm'])
     set_pci_runtime_pm('auto')

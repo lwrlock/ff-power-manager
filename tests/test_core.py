@@ -145,11 +145,11 @@ class ConfigTests(unittest.TestCase):
 
     @mock.patch('glob.glob')
     @mock.patch('builtins.open', new_callable=mock.mock_open, read_data='llama-server\n')
-    def test_auto_boost_llama_server_full_performance(self, mock_file, mock_glob):
+    def test_auto_boost_llama_server_idle_aware(self, mock_file, mock_glob):
         from fpm import auto_boost
         mock_glob.return_value = ['/proc/54321/comm']
-        # Both GPU-bound (low CPU%) and CPU-bound llama-server must trigger full performance boost
-        self.assertEqual(auto_boost.find_heavy_process(cpu_usage=2.5), 'llama-server')
+        # Idle llama-server (< 10% CPU) should NOT trigger boost, active (>= 10% CPU) should
+        self.assertIsNone(auto_boost.find_heavy_process(cpu_usage=2.5))
         self.assertEqual(auto_boost.find_heavy_process(cpu_usage=42.0), 'llama-server')
 
     @mock.patch('os.setpriority')
