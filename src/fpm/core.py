@@ -434,13 +434,18 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
     write_if_changed('/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost', '1' if not is_max_bat else '0')
     write_if_changed('/sys/devices/system/cpu/intel_pstate/no_turbo', '0' if not is_max_bat else '1')
 
-    # Force Intel Xe hardware PSR1 on Samsung 2.8K OLED (saves ~2.5W display memory traffic)
+    # Intel Xe PSR1: active on battery (~2W display savings), disabled on AC for zero 120Hz wake latency
+    psr_target = '2' if on_bat else '1'
     for psr_debug in glob.glob('/sys/kernel/debug/dri/*/i915_edp_psr_debug'):
-        write_if_changed(psr_debug, '2')
+        write_if_changed(psr_debug, psr_target)
 
     for c in sorted(online_cores):
         cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
         if c <= 5:
+            # On AC keep C3 (1048us wake latency) off on P-cores for razor-sharp 120Hz mouse/compositor wake
+            c3_disable = f'{cpu_dir}/cpuidle/state3/disable'
+            if os.path.exists(c3_disable):
+                write_if_changed(c3_disable, '1' if (not on_bat and not is_max_bat) else '0')
             # P-cores: 800 MHz floor for instantaneous 120Hz VSync response;
             # on battery idle use balance_power (EPB 6) with Turbo+HWP-Boost so idle drops fast to 4-5W
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
@@ -550,8 +555,7 @@ def set_pcie_aspm(value: str) -> None:
 
 
 def set_usb(value: str) -> None:
-    if value != 'auto':
-        return
+    auto_other = (value == 'auto')
     for dev_path in glob.glob('/sys/bus/usb/devices/*'):
         p = os.path.join(dev_path, 'power/control')
         if not os.path.exists(p):
@@ -563,6 +567,9 @@ def set_usb(value: str) -> None:
             delay_node = os.path.join(dev_path, 'power/autosuspend_delay_ms')
             if os.path.exists(delay_node):
                 write_if_changed(delay_node, '-1')
+            bus_num = os.path.basename(dev_path).split('-')[0].split(':')[0]
+            if bus_num.isdigit():
+                write_if_changed(f'/sys/bus/usb/devices/usb{bus_num}/power/control', 'on')
             continue
         # Never autosuspend USB Human Interface Devices (mice, keyboards, 2.4GHz wireless dongles)
         is_hid = False
@@ -572,8 +579,18 @@ def set_usb(value: str) -> None:
                 break
         if is_hid:
             write_if_changed(p, 'on')
+            delay_node = os.path.join(dev_path, 'power/autosuspend_delay_ms')
+            if os.path.exists(delay_node):
+                write_if_changed(delay_node, '-1')
+            # Keep parent USB root hub awake so 1000Hz wireless mouse dongles never suffer hub wake lag
+            bus_num = os.path.basename(dev_path).split('-')[0].split(':')[0]
+            if bus_num.isdigit():
+                write_if_changed(f'/sys/bus/usb/devices/usb{bus_num}/power/control', 'on')
             continue
-        write_if_changed(p, 'auto')
+        if os.path.basename(dev_path).startswith('usb'):
+            continue
+        if auto_other:
+            write_if_changed(p, 'auto')
 
 
 def set_audio(value: str) -> None:
@@ -673,8 +690,27 @@ def optimize_desktop_responsiveness() -> None:
                 cur_nice = os.getpriority(os.PRIO_PROCESS, pid)
                 if cur_nice != target_nice:
                     os.setpriority(os.PRIO_PROCESS, pid, target_nice)
+                if name in ('gnome-shell', 'mutter', 'xwayland'):
+                    try:
+                        os.sched_setaffinity(pid, {0, 1, 2, 3, 4, 5})
+                    except OSError:
+                        pass
         except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
             continue
+
+
+def pin_interactive_irqs() -> None:
+    """Keep USB HID (xhci_hcd) and Intel Xe GPU IRQs on P-cores (0-5) instead of L3-less LP-E cores."""
+    try:
+        with open('/proc/interrupts', 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    for line in lines:
+        if 'xhci_hcd' in line or line.rstrip().endswith(' xe'):
+            irq_str = line.split(':', 1)[0].strip()
+            if irq_str.isdigit():
+                write_if_changed(f'/proc/irq/{irq_str}/smp_affinity_list', '0-5')
 
 
 def set_smart_media_mode(active: bool) -> None:
@@ -801,6 +837,7 @@ def apply(mode: str, cfg: dict | None = None) -> None:
     set_rapl_limits(mode)
     optimize_sd_card()
     optimize_desktop_responsiveness()
+    pin_interactive_irqs()
 
 
 
