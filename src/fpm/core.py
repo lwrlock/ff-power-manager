@@ -357,9 +357,14 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
         # Let set_gpu manage graphics controllers (class 0x03xxxx)
         if cls.startswith('0x03'):
             continue
-        # Keep USB host controllers (class 0x0c03xx) on to prevent Intel BE200 Bluetooth & USB sleep drops
+        # Thunderbolt / USB4 NHI (0x0c0340) can safely enter D3cold when idle
+        if cls == '0x0c0340':
+            write_if_changed(ctrl, 'auto')
+            continue
+        # Keep xHCI USB controllers (0x0c03xx) on only when a child USB device (e.g. BT/HID) is attached
         if cls.startswith('0x0c03'):
-            write_if_changed(ctrl, 'on')
+            has_usb_child = any(glob.glob(os.path.join(dev_dir, 'usb*', '[0-9]*-[0-9]*')))
+            write_if_changed(ctrl, 'on' if has_usb_child else 'auto')
             continue
         write_if_changed(ctrl, 'auto')
 
@@ -418,8 +423,8 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
         if high_load:
             p_max, e_max, lpe_max = '4800000', '3400000', '2400000'
         else:
-            # ProMotion Battery Profile: P-cores burst up to 4.2 GHz for silky-smooth 120Hz UI response
-            p_max, e_max, lpe_max = '4200000', '3000000', '1800000'
+            # ProMotion Battery Profile: 400 MHz deep-idle floor + 4.4 GHz instant single-core burst
+            p_max, e_max, lpe_max = '4400000', '2800000', '1800000'
     else:
         # On AC: All cores burst to maximum
         p_max, e_max, lpe_max = '4800000', '3600000', '2400000'
@@ -446,16 +451,16 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
             c3_disable = f'{cpu_dir}/cpuidle/state3/disable'
             if os.path.exists(c3_disable):
                 write_if_changed(c3_disable, '1' if (not on_bat and not is_max_bat) else '0')
-            # P-cores: 800 MHz floor for instantaneous 120Hz VSync response;
-            # on battery idle use balance_power (EPB 6) with Turbo+HWP-Boost so idle drops fast to 4-5W
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
+            # On battery idle drop P-core floor to hardware 400 MHz (C10 power-gating) while HWP+Turbo burst to 4.4 GHz on touch
+            p_min = '400000' if (on_bat and not high_load) else '800000'
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', p_min)
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
             if is_max_bat:
                 p_epp, p_epb = 'power', '15'
             elif mode == 'cool_quiet':
                 p_epp, p_epb = 'balance_power', '8'
             elif on_bat and not high_load:
-                p_epp, p_epb = 'balance_power', '6'
+                p_epp, p_epb = 'balance_power', '9'
             else:
                 p_epp, p_epb = 'balance_performance', '4'
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
@@ -463,8 +468,14 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
         elif c <= 13:
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
-            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_max_bat else ('balance_performance' if not on_bat else 'balance_power'))
-            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '14' if is_max_bat else ('4' if not on_bat else '7'))
+            if is_max_bat:
+                e_epp, e_epb = 'power', '14'
+            elif on_bat and not high_load:
+                e_epp, e_epb = 'power', '12'
+            else:
+                e_epp, e_epb = 'balance_performance', '4'
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', e_epp)
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', e_epb)
         else:
             # Low-Power Skymont Island (cores 14, 15 on SoC tile)
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
@@ -473,8 +484,8 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
                 write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
                 write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
             else:
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if on_bat else 'balance_performance')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '11' if on_bat else '6')
+                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if (on_bat and not high_load) else 'balance_performance')
+                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15' if (on_bat and not high_load) else '6')
 
 
 def set_cpu_freq_floor(mode: str | None = None, high_load: bool = False) -> None:
@@ -499,21 +510,21 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
         is_gt1 = 'gt1' in gt_freq
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
-            # In max_battery keep power_saving; in balanced & ac use 'base' for instant media response
-            write_if_changed(power_prof, 'power_saving' if is_max_bat else 'base')
+            # Battery uses power_saving SLPC for deep RC6 idle; AC and high-load boost use 'base'
+            use_power_saving = is_max_bat or (on_bat and not is_extreme)
+            write_if_changed(power_prof, 'power_saving' if use_power_saving else 'base')
         min_node = os.path.join(gt_freq, 'min_freq')
         if os.path.exists(min_node):
+            # Respect hardware rpn_freq floor (e.g. 800 MHz on gt0) so writes after extreme_performance never fail EINVAL
+            rpn_raw = read_text(os.path.join(gt_freq, 'rpn_freq'))
+            rpn_val = int(rpn_raw.strip()) if rpn_raw and rpn_raw.strip().isdigit() else (100 if is_gt1 else 800)
             if is_extreme:
-                target_min = '500' if is_gt1 else '1400'
+                desired_min = 500 if is_gt1 else 1400
             elif is_max_bat:
-                target_min = '100' if is_gt1 else '200'
-            elif on_bat:
-                # 600 MHz floor for 3D GPU (gt0) renders 2.8K 120Hz compositor without frame drops;
-                # gt1 media engine rests at hardware 100 MHz RPN until set_smart_media_mode() bumps it.
-                target_min = '100' if is_gt1 else '600'
+                desired_min = 100 if is_gt1 else rpn_val
             else:
-                target_min = '100' if is_gt1 else '600'
-            write_if_changed(min_node, target_min)
+                desired_min = 100 if is_gt1 else rpn_val
+            write_if_changed(min_node, str(max(rpn_val, desired_min)))
         max_node = os.path.join(gt_freq, 'max_freq')
         if os.path.exists(max_node):
             rp0_node = os.path.join(gt_freq, 'rp0_freq')
@@ -524,7 +535,7 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
                 target_max = '800' if is_gt1 else '800'
             else:
                 # Balanced mode: 3D GPU (gt0) dynamic burst up to 1600 MHz (battery) / 1800 MHz (AC)
-                # for liquid-smooth 120Hz ProMotion without frame drops, while staying at 800 MHz in idle.
+                # for liquid-smooth 120Hz ProMotion without frame drops, while resting at RPN/RC6 in idle.
                 target_max = '1200' if is_gt1 else ('1600' if on_bat else '1800')
             write_if_changed(max_node, target_max)
 
@@ -665,6 +676,13 @@ INTERACTIVE_QOS_PROCESSES = {
     'pipewire': -11,
     'pipewire-pulse': -11,
     'wireplumber': -11,
+    'easyeffects': -9,
+    'pulseeffects': -9,
+    'kitty': -5,
+    'ptyxis': -5,
+    'gnome-terminal-': -5,
+    'firefox': -4,
+    'obsidian': -4,
 }
 
 BACKGROUND_QOS_PROCESSES = {
@@ -726,10 +744,10 @@ def set_smart_media_mode(active: bool) -> None:
     on_bat = on_battery_from_sysfs()
     state_file = RUN_DIR / 'media.state'
     if active and on_bat:
-        # P-cores (0..5): 3.6 GHz burst ceiling with responsive balance_power (EPB 6)
+        # P-cores (0..5): 400 MHz deep idle floor + 3.6 GHz burst ceiling with balance_power (EPB 6)
         for c in range(6):
             cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '3600000')
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '6')
@@ -747,9 +765,10 @@ def set_smart_media_mode(active: bool) -> None:
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '1800000')
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '12')
-        # Ensure Media Engine (gt1) has responsive floor for 4K 60fps decode
-        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt1/freq0/min_freq', '600')
-        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0/min_freq', '600')
+        # Ensure Media Engine (gt1) has responsive floor for 4K 60fps decode; gt0 uses RPN floor (800 MHz)
+        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt1/freq0/min_freq', '400')
+        gt0_rpn = read_text('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0/rpn_freq') or '800'
+        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0/min_freq', gt0_rpn)
         try:
             state_file.write_text('active\n')
         except Exception:
@@ -769,10 +788,12 @@ def set_rapl_limits(mode: str) -> None:
     # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits (MacBook-style cool & responsive)
     if mode in ('extreme_performance', 'performance'):
         pl1, pl2 = 65000000, 100000000
+    elif mode == 'battery_boost':
+        pl1, pl2 = 35000000, 55000000
     elif mode in ('max_battery', 'maximum_battery'):
         pl1, pl2 = 12000000, 20000000
     elif mode == 'battery':
-        pl1, pl2 = 15000000, 28000000
+        pl1, pl2 = 15000000, 32000000
     elif mode == 'cool_quiet':
         pl1, pl2 = 18000000, 30000000
     else:  # ac / balanced optimum (quiet idle + crisp sustained boost)
@@ -782,6 +803,8 @@ def set_rapl_limits(mode: str) -> None:
     if PLATFORM_PROFILE_PATH.exists():
         if mode in ('extreme_performance', 'performance'):
             write_if_changed(PLATFORM_PROFILE_PATH, 'performance')
+        elif mode == 'battery_boost':
+            write_if_changed(PLATFORM_PROFILE_PATH, 'balanced')
         elif mode in ('battery', 'max_battery', 'maximum_battery', 'cool_quiet'):
             write_if_changed(PLATFORM_PROFILE_PATH, 'low-power')
         else:

@@ -213,6 +213,59 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(calls['/proc/sys/vm/extfrag_threshold'], '750')
         self.assertEqual(calls['/sys/kernel/mm/lru_gen/min_ttl_ms'], '1000')
 
+    @mock.patch('fpm.core.write_if_changed')
+    @mock.patch('fpm.core.read_text')
+    @mock.patch('fpm.core.os.path.exists', return_value=True)
+    @mock.patch('fpm.core.glob.glob')
+    def test_set_gpu_clamps_min_freq_to_rpn_and_uses_power_saving_on_battery(
+        self, mock_glob, _mock_exists, mock_read, mock_write
+    ):
+        mock_glob.side_effect = [
+            [],
+            ['/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0'],
+            [],
+        ]
+        mock_read.side_effect = lambda p: '800' if str(p).endswith('rpn_freq') else '2350'
+        core.set_gpu('auto', 'battery')
+        calls = {c.args[0]: c.args[1] for c in mock_write.call_args_list}
+        base = '/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0'
+        self.assertEqual(calls[f'{base}/power_profile'], 'power_saving')
+        self.assertEqual(calls[f'{base}/min_freq'], '800')
+        self.assertEqual(calls[f'{base}/max_freq'], '1600')
+
+    @mock.patch('fpm.core.write_if_changed')
+    @mock.patch('fpm.core.read_text')
+    @mock.patch('fpm.core.glob.glob')
+    def test_pci_runtime_pm_allows_thunderbolt_and_empty_usb_auto(self, mock_glob, mock_read, mock_write):
+        def fake_glob(pattern):
+            if pattern == '/sys/bus/pci/devices/*/power/control':
+                return [
+                    '/sys/bus/pci/devices/0000:00:0d.2/power/control',
+                    '/sys/bus/pci/devices/0000:00:0d.0/power/control',
+                    '/sys/bus/pci/devices/0000:00:14.0/power/control',
+                ]
+            if '0000:00:14.0' in pattern:
+                return ['/sys/bus/pci/devices/0000:00:14.0/usb3/3-10']
+            return []
+
+        mock_glob.side_effect = fake_glob
+        mock_read.side_effect = lambda p: '0x0c0340' if '0d.2' in str(p) else '0x0c0330'
+        core.set_pci_runtime_pm('auto')
+        calls = {c.args[0]: c.args[1] for c in mock_write.call_args_list}
+        self.assertEqual(calls['/sys/bus/pci/devices/0000:00:0d.2/power/control'], 'auto')
+        self.assertEqual(calls['/sys/bus/pci/devices/0000:00:0d.0/power/control'], 'auto')
+        self.assertEqual(calls['/sys/bus/pci/devices/0000:00:14.0/power/control'], 'on')
+
+    @mock.patch('fpm.core.write_if_changed')
+    def test_set_rapl_limits_battery_boost(self, mock_write):
+        with mock.patch.object(core.pathlib.Path, 'exists', return_value=True), \
+             mock.patch.object(core.pathlib.Path, 'glob', return_value=[core.pathlib.Path('/sys/class/powercap/intel-rapl/intel-rapl:0')]):
+            core.set_rapl_limits('battery_boost')
+            calls = {str(c.args[0]): c.args[1] for c in mock_write.call_args_list}
+            self.assertEqual(calls[str(core.PLATFORM_PROFILE_PATH)], 'balanced')
+            self.assertEqual(calls['/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw'], '35000000')
+            self.assertEqual(calls['/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_1_power_limit_uw'], '55000000')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -14,6 +14,7 @@ from .core import (
     set_smart_media_mode,
     set_cpu_freq_floor,
     set_gpu,
+    set_rapl_limits,
     read_text,
     RUN_DIR,
 )
@@ -178,30 +179,32 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
 
         if on_bat:
             # Dynamic Responsiveness on Battery: All 16 cores remain online.
-            # Idle cores enter C6/C10 autonomously (0W). No stop_machine() hotplug freezes!
-            is_high_load = (heavy is not None) or (cpu_usage >= 45.0)
+            # Idle cores enter C6/C10 autonomously (0W); 30%+ bursts engage battery_boost immediately.
+            is_high_load = (heavy is not None) or (cpu_usage >= 30.0)
 
             if is_high_load:
                 last_high_load_time = now
                 if not dynamic_cores_unparked:
                     dynamic_cores_unparked = True
                     reason = f"heavy process '{heavy}'" if heavy else f"CPU load {cpu_usage:.1f}%"
-                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Boosting CPU & GPU frequencies.\n")
+                    sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Boosting CPU, GPU & RAPL on battery.\n")
                     sys.stdout.flush()
                     try:
+                        set_rapl_limits('battery_boost')
                         set_cpu_freq_floor('extreme_performance', high_load=True)
                         set_gpu('auto', 'extreme_performance')
                         optimize_desktop_responsiveness()
                     except Exception as exc:
                         sys.stderr.write(f"Failed to engage high load boost: {exc}\n")
             else:
-                if dynamic_cores_unparked and (now - last_high_load_time >= 5.0):
+                if dynamic_cores_unparked and (now - last_high_load_time >= 4.0):
                     dynamic_cores_unparked = False
-                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Restoring ProMotion battery caps.\n")
+                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Restoring deep-efficiency battery caps.\n")
                     sys.stdout.flush()
                     try:
                         set_cpu_freq_floor('battery', high_load=False)
                         set_gpu('auto', 'battery')
+                        set_rapl_limits('battery')
                     except Exception as exc:
                         sys.stderr.write(f"Failed to return to battery profile: {exc}\n")
 
