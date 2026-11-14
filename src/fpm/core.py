@@ -614,20 +614,20 @@ def optimize_sd_card() -> None:
 def apply_kernel_tunings(mode: str) -> None:
     if mode in ('battery', 'max_battery', 'maximum_battery'):
         pass # vm.laptop_mode deprecated in Linux 6.12+
-        write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '6000')
-        write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '12000')
-        write_if_changed('/proc/sys/vm/dirty_ratio', '20')
-        write_if_changed('/proc/sys/vm/dirty_background_ratio', '10')
+        write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '3000')
+        write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '6000')
+        write_if_changed('/proc/sys/vm/dirty_bytes', '268435456')
+        write_if_changed('/proc/sys/vm/dirty_background_bytes', '67108864')
         write_if_changed('/proc/sys/kernel/nmi_watchdog', '0')
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'med_power_with_dipm')
     else:
         pass # vm.laptop_mode deprecated in Linux 6.12+
-        write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '1500')
+        write_if_changed('/proc/sys/vm/dirty_writeback_centisecs', '500')
         write_if_changed('/proc/sys/vm/dirty_expire_centisecs', '3000')
-        write_if_changed('/proc/sys/vm/dirty_ratio', '20')
-        write_if_changed('/proc/sys/vm/dirty_background_ratio', '10')
+        write_if_changed('/proc/sys/vm/dirty_bytes', '268435456')
+        write_if_changed('/proc/sys/vm/dirty_background_bytes', '67108864')
         write_if_changed('/proc/sys/kernel/nmi_watchdog', '0')
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
@@ -635,20 +635,22 @@ def apply_kernel_tunings(mode: str) -> None:
     # MacBook Pro-grade low-latency scheduler, VM, ZRAM & NVMe responsiveness tunings
     write_if_changed('/proc/sys/kernel/sched_autogroup_enabled', '1')
     write_if_changed('/proc/sys/kernel/split_lock_mitigate', '0')
-    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '50')
-    write_if_changed('/proc/sys/vm/swappiness', '10')
+    write_if_changed('/proc/sys/vm/vfs_cache_pressure', '100')
+    write_if_changed('/proc/sys/vm/swappiness', '40')
     write_if_changed('/proc/sys/vm/compaction_proactiveness', '0')
+    write_if_changed('/proc/sys/vm/extfrag_threshold', '750')
     write_if_changed('/proc/sys/vm/watermark_boost_factor', '0')
     write_if_changed('/proc/sys/vm/watermark_scale_factor', '125')
     write_if_changed('/proc/sys/vm/page-cluster', '0')
     write_if_changed('/proc/sys/vm/stat_interval', '10')
+    write_if_changed('/sys/kernel/mm/lru_gen/min_ttl_ms', '1000')
     write_if_changed('/sys/kernel/mm/transparent_hugepage/shmem_enabled', 'advise')
     for zram_ra in glob.glob('/sys/block/zram*/queue/read_ahead_kb'):
         write_if_changed(zram_ra, '0')
     for q_dir in glob.glob('/sys/block/nvme*/queue'):
         write_if_changed(os.path.join(q_dir, 'scheduler'), 'none')
         write_if_changed(os.path.join(q_dir, 'rq_affinity'), '2')
-        write_if_changed(os.path.join(q_dir, 'read_ahead_kb'), '256')
+        write_if_changed(os.path.join(q_dir, 'read_ahead_kb'), '128')
         write_if_changed(os.path.join(q_dir, 'iostats'), '0')
 
 

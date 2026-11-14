@@ -200,6 +200,19 @@ class ConfigTests(unittest.TestCase):
             with mock.patch('subprocess.run', return_value=mock.MagicMock(stdout='SUSPENDED')):
                 self.assertFalse(ctrl._is_media_active())
 
+    @mock.patch('fpm.core.glob.glob', return_value=[])
+    @mock.patch('fpm.core.write_if_changed')
+    def test_apply_kernel_tunings_syncs_byte_writeback_and_vm(self, mock_write, mock_glob):
+        core.apply_kernel_tunings('ac')
+        calls = {c.args[0]: c.args[1] for c in mock_write.call_args_list}
+        self.assertEqual(calls['/proc/sys/vm/dirty_background_bytes'], '67108864')
+        self.assertEqual(calls['/proc/sys/vm/dirty_bytes'], '268435456')
+        self.assertEqual(calls['/proc/sys/vm/dirty_writeback_centisecs'], '500')
+        self.assertEqual(calls['/proc/sys/vm/swappiness'], '40')
+        self.assertEqual(calls['/proc/sys/vm/vfs_cache_pressure'], '100')
+        self.assertEqual(calls['/proc/sys/vm/extfrag_threshold'], '750')
+        self.assertEqual(calls['/sys/kernel/mm/lru_gen/min_ttl_ms'], '1000')
+
 
 if __name__ == '__main__':
     unittest.main()

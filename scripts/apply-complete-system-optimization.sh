@@ -93,28 +93,97 @@ zram-size = ram / 2
 compression-algorithm = zstd
 EOF
 
-# 5. Kernel TCP BBR, Scheduler Autogroup & Low-Latency VM Cache Optimization
+# 5. Kernel TCP BBR, Scheduler Autogroup, Smooth Writeback & Low-Latency VM Optimization
 cat <<'EOF' > /etc/sysctl.d/99-ff-system-tuning.conf
-# High performance networking and MacBook Pro-grade low-latency desktop caching
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
+# High-performance Linux 7.2+ Kernel, VM, Scheduler & Wi-Fi 7 Networking
+
+# Scheduler & CPU Latency
 kernel.sched_autogroup_enabled = 1
-vm.vfs_cache_pressure = 50
-vm.swappiness = 10
+kernel.split_lock_mitigate = 0
+kernel.nmi_watchdog = 0
+
+# Virtual Memory & ZRAM (32 GB LPDDR5x + 15.4 GB zstd ZRAM)
+vm.swappiness = 40
+vm.page-cluster = 0
+vm.vfs_cache_pressure = 100
 vm.compaction_proactiveness = 0
+vm.compact_unevictable_allowed = 1
 vm.watermark_boost_factor = 0
 vm.watermark_scale_factor = 125
-vm.page-cluster = 0
+vm.min_free_kbytes = 131072
+vm.stat_interval = 10
 vm.max_map_count = 2147483642
+
+# Smooth NVMe Writeback & Kernel Hygiene
+vm.dirty_background_bytes = 67108864
+vm.dirty_bytes = 268435456
+vm.dirty_writeback_centisecs = 500
+vm.extfrag_threshold = 750
+kernel.kptr_restrict = 2
+fs.protected_fifos = 2
+
+# Filesystem & Async I/O Limits
 fs.file-max = 2097152
+fs.aio-max-nr = 1048576
 fs.inotify.max_user_watches = 1048576
 fs.inotify.max_user_instances = 1024
+
+# Network Stack (TCP BBR + FQ + QUIC/HTTP3 + Dead Socket Cleanup)
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.optmem_max = 262144
+net.core.somaxconn = 8192
+net.core.netdev_max_backlog = 4096
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 4000
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.udp_rmem_min = 8192
+net.ipv4.udp_wmem_min = 8192
+net.ipv4.tcp_max_syn_backlog = 4096
+net.ipv4.tcp_rfc1337 = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_notsent_lowat = 16384
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
+# 5a. MGLRU Working-Set Protection, Fast Shutdown, Malloc Trim & Journald Cap
+mkdir -p /etc/tmpfiles.d /etc/systemd/system.conf.d /etc/systemd/journald.conf.d
+cat <<'EOF' > /etc/tmpfiles.d/99-mglru.conf
+w /sys/kernel/mm/lru_gen/min_ttl_ms - - - - 1000
+EOF
+systemd-tmpfiles --create /etc/tmpfiles.d/99-mglru.conf 2>/dev/null || true
+
+cat <<'EOF' > /etc/systemd/system.conf.d/99-fast-shutdown.conf
+[Manager]
+DefaultTimeoutStartSec=20s
+DefaultTimeoutStopSec=15s
+EOF
+
+cat <<'EOF' > /etc/systemd/system.conf.d/99-malloc-trim.conf
+[Manager]
+DefaultEnvironment=MALLOC_ARENA_MAX=2
+EOF
+
+cat <<'EOF' > /etc/systemd/journald.conf.d/99-ram-trim.conf
+[Journal]
+SystemMaxUse=64M
+RuntimeMaxUse=32M
+EOF
+
 # 5b. NVMe Multi-Queue Low-Latency I/O Rules
 cat <<'EOF' > /etc/udev/rules.d/99-nvme-io.rules
-ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none", ATTR{queue/rq_affinity}="2", ATTR{queue/read_ahead_kb}="256", ATTR{queue/iostats}="0"
+ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none", ATTR{queue/rq_affinity}="2", ATTR{queue/read_ahead_kb}="128", ATTR{queue/iostats}="0"
 EOF
 
 # 6. Hardware Video Acceleration (VA-API Intel iHD Driver)
