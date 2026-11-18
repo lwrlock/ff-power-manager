@@ -290,7 +290,7 @@ class MainWindow(Adw.ApplicationWindow):
                 comments=(
                     "Engineered for Lenovo IdeaPad Pro 5 14IAH10 and modern Intel mobile platforms.\n"
                     "MacBook-level battery efficiency, zero-stutter performance architecture.\n\n"
-                    "Developed as an open-source initiative by a 17-year-old computer engineering student in collaboration with AI."
+                    "Developed as an open-source initiative by an 18-year-old computer engineering student in collaboration with AI."
                 ),
             )
             dialog.present(self)

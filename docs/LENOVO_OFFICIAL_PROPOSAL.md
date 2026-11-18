@@ -15,7 +15,7 @@
 
 Hi Mark,
 
-I hope you are doing well. My name is Furkan (`lwrlock` on GitHub), a 17-year-old Computer Engineering student and Linux enthusiast running Ubuntu/Fedora on a **Lenovo IdeaPad Pro 5 14IAH10 (83JK — Intel Core Ultra 9 285H, Intel Arc Graphics, 2.8K 120Hz OLED, Intel ISH ST VL53L1 ToF Sensor)**.
+I hope you are doing well. My name is Furkan (`lwrlock` on GitHub), an 18-year-old Computer Engineering student and Linux enthusiast running Ubuntu/Fedora on a **Lenovo IdeaPad Pro 5 14IAH10 (83JK — Intel Core Ultra 9 285H, Intel Arc Graphics, 2.8K 120Hz OLED, Intel ISH ST VL53L1 ToF Sensor)**.
 
 Over the past several weeks, I built and open-sourced **FF Power Manager v2.0** (MIT License) to solve several real-world power, thermal, and display gaps on modern Lenovo laptops under Linux/GNOME Wayland—and I would love to share the findings and contribute toward making official Lenovo/Linux support even better (upstream `power-profiles-daemon`, `ideapad-laptop`, or official Lenovo Linux guides/tools):
 
