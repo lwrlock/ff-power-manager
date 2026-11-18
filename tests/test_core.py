@@ -522,6 +522,32 @@ class ConfigTests(unittest.TestCase):
                     self.assertIn('ff-power-diagnostics/summary.json', names)
                     self.assertIn('ff-power-diagnostics/doctor.json', names)
 
+    def test_estimate_process_power_impact_and_safe_throttle(self):
+        procs = [
+            {'pid': 5001, 'name': 'chrome', 'cpu_pct': 30.0, 'wakeups_per_sec': 400.0},
+            {'pid': 5002, 'name': 'slack', 'cpu_pct': 10.0, 'wakeups_per_sec': 100.0},
+        ]
+        enriched = core.estimate_process_power_impact(procs, sys_watts=12.0, energy_now_wh=36.0)
+        self.assertGreater(enriched[0]['est_watts'], enriched[1]['est_watts'])
+        self.assertGreater(enriched[0]['minutes_lost'], 10.0)
+        self.assertLessEqual(enriched[0]['est_watts'] + enriched[1]['est_watts'], 12.0)
+
+        # Protected PID 1 / self / gnome-shell must be refused
+        self.assertFalse(core.throttle_process(1, 'pause')['ok'])
+        self.assertFalse(core.throttle_process(os.getpid(), 'pause')['ok'])
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = pathlib.Path(tmp)
+            (proc / '777').mkdir()
+            (proc / '777' / 'comm').write_text('gnome-shell\n')
+            self.assertFalse(core.throttle_process(777, 'pause', proc_root=proc)['ok'])
+
+            (proc / '888').mkdir()
+            (proc / '888' / 'comm').write_text('chrome\n')
+            with mock.patch('os.kill') as kill_m:
+                res = core.throttle_process(888, 'pause', proc_root=proc)
+                self.assertTrue(res['ok'])
+                kill_m.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

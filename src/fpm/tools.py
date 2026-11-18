@@ -27,6 +27,7 @@ from .core import (
     save_and_apply_config,
     set_lenovo_feature,
     status_snapshot,
+    throttle_process,
 )
 
 _MAC_RE = re.compile(r'\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b')
@@ -252,6 +253,22 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"✓ Diagnostics bundle saved: {res['path']} ({res['size_bytes']} bytes)")
         return 0
+
+    if cmd == 'throttle':
+        targets = [a for a in argv[1:] if not a.startswith('-')]
+        if not targets or not targets[0].isdigit():
+            print('Usage: ffctl throttle PID [pause|resume|lowprio] [--json]', file=sys.stderr)
+            return 2
+        pid = int(targets[0])
+        action = targets[1] if len(targets) > 1 else 'pause'
+        res = throttle_process(pid, action=action)
+        if as_json:
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+        elif res.get('ok'):
+            print(f"✓ {res['action'].title()} applied to {res['name']} (PID {pid})")
+        else:
+            print(f"Error: {res.get('error', 'failed')}", file=sys.stderr)
+        return 0 if res.get('ok') else 1
 
     print(f'Unknown command: {cmd}', file=sys.stderr)
     return 2

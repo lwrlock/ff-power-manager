@@ -992,11 +992,15 @@ static void print_blame(bool as_json) {
     }
 
     const double sample_sec = 0.25;
+    int64_t rapl0 = asm_fast_read_sysfs_int("/sys/class/powercap/intel-rapl:0/energy_uj");
+    int64_t rapl_max = asm_fast_read_sysfs_int("/sys/class/powercap/intel-rapl:0/max_energy_range_uj");
     usleep(250000);
+    int64_t rapl1 = asm_fast_read_sysfs_int("/sys/class/powercap/intel-rapl:0/energy_uj");
     long hz = sysconf(_SC_CLK_TCK);
     if (hz <= 0) hz = 100;
 
     size_t active_n = 0;
+    double total_score = 0.0;
     for (size_t i = 0; i < count; i++) {
         uint64_t t1 = 0, c1 = 0;
         if (!read_proc_sample(procs[i].pid, NULL, 0, &t1, &c1)) continue;
@@ -1009,9 +1013,50 @@ static void print_blame(bool as_json) {
         procs[active_n].cpu_pct = cpu;
         procs[active_n].csw_rate = csw_s;
         procs[active_n].score = cpu * 4.0 + csw_s * 0.05;
+        total_score += procs[active_n].score;
         active_n++;
     }
     qsort(procs, active_n, sizeof(BlameProc), cmp_blame_desc);
+
+    init_battery_path();
+    char en_path[512];
+    snprintf(en_path, sizeof(en_path), "%s/energy_now", g_bat_path);
+    int64_t now_uwh = asm_fast_read_sysfs_int(en_path);
+    if (now_uwh <= 0) {
+        snprintf(en_path, sizeof(en_path), "%s/energy_full", g_bat_path);
+        int64_t full_uwh = asm_fast_read_sysfs_int(en_path);
+        snprintf(en_path, sizeof(en_path), "%s/capacity", g_bat_path);
+        int64_t cap = asm_fast_read_sysfs_int(en_path);
+        if (full_uwh > 0 && cap > 0) now_uwh = (full_uwh * cap) / 100;
+    }
+    double energy_now_wh = now_uwh > 0 ? (double)now_uwh / 1e6 : 0.0;
+
+    double sys_watts = 0.0;
+    snprintf(en_path, sizeof(en_path), "%s/power_now", g_bat_path);
+    int64_t bat_uw = asm_fast_read_sysfs_int(en_path);
+    if (bat_uw > 0) {
+        sys_watts = (double)bat_uw / 1e6;
+    } else if (rapl0 > 0 && rapl1 > 0) {
+        int64_t mx = rapl_max > 0 ? rapl_max : 262143328850LL;
+        int64_t d_uj = (rapl1 >= rapl0) ? (rapl1 - rapl0) : ((mx - rapl0) + rapl1);
+        sys_watts = 1.80 + (double)d_uj / (sample_sec * 1e6);
+    } else {
+        FILE *hf = fopen("/run/ff-power-manager/telemetry_history.json", "r");
+        if (hf) {
+            char hbuf[4096];
+            size_t hn = fread(hbuf, 1, sizeof(hbuf) - 1, hf);
+            fclose(hf);
+            hbuf[hn] = '\0';
+            char *last_w = NULL, *cur = hbuf;
+            while ((cur = strstr(cur, "\"watts\":")) != NULL) {
+                last_w = cur;
+                cur += 8;
+            }
+            if (last_w) sscanf(last_w, "\"watts\":%lf", &sys_watts);
+        }
+    }
+    double w_base = (sys_watts > 0.0) ? ((sys_watts * 0.35 < 3.2) ? (sys_watts * 0.35) : 3.2) : 0.0;
+    double w_dyn = (sys_watts > w_base) ? (sys_watts - w_base) : 0.0;
 
     typedef struct { char id[64]; char label[128]; } BlockerDev;
     BlockerDev pci_active[16], usb_active[16];
@@ -1064,13 +1109,23 @@ static void print_blame(bool as_json) {
     char dgpu_sum[64] = "";
     int dgpu_awake = count_awake_dgpus(dgpu_sum, sizeof(dgpu_sum));
     if (as_json) {
-        printf("{\n  \"sample_ms\": 250,\n  \"dgpu_awake\": %d,\n  \"dgpu_info\": \"%s\",\n  \"processes\": [",
-               dgpu_awake, dgpu_sum);
+        printf("{\n  \"sample_ms\": 250,\n  \"sys_watts\": %.2f,\n  \"energy_now_wh\": %.2f,\n  \"dgpu_awake\": %d,\n  \"dgpu_info\": \"%s\",\n  \"processes\": [",
+               sys_watts, energy_now_wh, dgpu_awake, dgpu_sum);
         for (size_t i = 0; i < top_n; i++) {
             char esc[96];
             json_escape(procs[i].comm, esc, sizeof(esc));
-            printf("%s\n    {\"pid\": %d, \"name\": \"%s\", \"cpu_pct\": %.1f, \"wakeups_per_sec\": %.1f}",
-                   i == 0 ? "" : ",", (int)procs[i].pid, esc, procs[i].cpu_pct, procs[i].csw_rate);
+            double est_w = (total_score > 0.0 && w_dyn > 0.0) ? (w_dyn * (procs[i].score / total_score)) : 0.0;
+            if (est_w > sys_watts) est_w = sys_watts;
+            double mins_lost = 0.0;
+            if (energy_now_wh > 0.0 && sys_watts > 0.5 && est_w > 0.01) {
+                double rem = sys_watts - est_w;
+                if (rem < 0.8) rem = 0.8;
+                mins_lost = ((energy_now_wh / rem) - (energy_now_wh / sys_watts)) * 60.0;
+                if (mins_lost > 600.0) mins_lost = 600.0;
+                if (mins_lost < 0.0) mins_lost = 0.0;
+            }
+            printf("%s\n    {\"pid\": %d, \"name\": \"%s\", \"cpu_pct\": %.1f, \"wakeups_per_sec\": %.1f, \"est_watts\": %.2f, \"minutes_lost\": %.1f}",
+                   i == 0 ? "" : ",", (int)procs[i].pid, esc, procs[i].cpu_pct, procs[i].csw_rate, est_w, mins_lost);
         }
         printf("\n  ],\n  \"active_pci\": [");
         for (size_t i = 0; i < n_pci; i++) {
@@ -1098,10 +1153,20 @@ static void print_blame(bool as_json) {
     if (top_n == 0) {
         printf("  All user processes are deeply idle (< 1 wakeup/sec).\n");
     } else {
-        printf("  %-7s %-20s %8s %14s\n", "PID", "PROCESS", "CPU %", "WAKEUPS / SEC");
+        printf("  %-7s %-18s %8s %11s %9s %11s\n", "PID", "PROCESS", "CPU %", "WAKEUPS/S", "~WATTS", "BATT DRAIN");
         for (size_t i = 0; i < top_n; i++) {
-            printf("  %-7d %-20s %7.1f%% %11.1f/s\n",
-                   (int)procs[i].pid, procs[i].comm, procs[i].cpu_pct, procs[i].csw_rate);
+            double est_w = (total_score > 0.0 && w_dyn > 0.0) ? (w_dyn * (procs[i].score / total_score)) : 0.0;
+            if (est_w > sys_watts) est_w = sys_watts;
+            double mins_lost = 0.0;
+            if (energy_now_wh > 0.0 && sys_watts > 0.5 && est_w > 0.01) {
+                double rem = sys_watts - est_w;
+                if (rem < 0.8) rem = 0.8;
+                mins_lost = ((energy_now_wh / rem) - (energy_now_wh / sys_watts)) * 60.0;
+                if (mins_lost > 600.0) mins_lost = 600.0;
+                if (mins_lost < 0.0) mins_lost = 0.0;
+            }
+            printf("  %-7d %-18s %7.1f%% %9.1f/s %7.2f W %7.0fm lost\n",
+                   (int)procs[i].pid, procs[i].comm, procs[i].cpu_pct, procs[i].csw_rate, est_w, mins_lost);
         }
     }
     printf("\n" COLOR_BOLD "  Active Hardware Keeping Bus Awake (Not Runtime Suspended):\n" COLOR_RESET);
@@ -1238,7 +1303,7 @@ static int run_python_tools(int argc, char *argv[]) {
 int main(int argc, char *argv[]) {
     bool as_json = has_json_flag(argc, argv);
 
-    if (argc >= 2 && (strcmp(argv[1], "setup") == 0 || strcmp(argv[1], "bundle") == 0)) {
+    if (argc >= 2 && (strcmp(argv[1], "setup") == 0 || strcmp(argv[1], "bundle") == 0 || strcmp(argv[1], "throttle") == 0)) {
         return run_python_tools(argc, argv);
     }
 
@@ -1339,6 +1404,7 @@ int main(int argc, char *argv[]) {
                "  sleep-report [--json] Show last s2idle/deep suspend drain duration, Wh and W\n"
                "  setup [--apply]       Scan hardware capabilities and recommend/apply optimal profile\n"
                "  bundle [path] [--json] Create sanitized .tar.gz diagnostics bundle for bug reports\n"
+               "  throttle PID [action] Pause/resume/lowprio a runaway background PID safely\n"
                "  apply [profile]       Apply profile (battery|ac|extreme_performance|cool_quiet|max_battery)\n"
                "  health [--json]       Display battery health, degradation, capacity and cycle analytics\n"
                "  lenovo                Display Lenovo ACPI hardware integration status\n"

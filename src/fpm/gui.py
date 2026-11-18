@@ -32,6 +32,7 @@ from .core import (
     save_sensor_config,
     set_lenovo_feature,
     status_snapshot,
+    throttle_process,
 )
 from .cosmic_ui import CosmicBackdrop, TelemetrySparklineChart
 from .tools import create_diagnostics_bundle, hardware_setup_scan
@@ -316,6 +317,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._dock_pinned = False
         self._dock_hide_id = 0
         self._dock_buttons = {}
+        self._paused_pids: dict[int, str] = {}
 
         # 3-layer spatial cockpit: VRAM cosmic space + Bento content + Auto-hide bottom hover dock
         root_overlay = Gtk.Overlay()
@@ -747,7 +749,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         split = Gtk.Grid(column_spacing=14, row_spacing=14, column_homogeneous=True, hexpand=True)
 
-        proc_card = self._card('Top Process Offenders')
+        proc_card = self._card('Top Power & Battery Thieves', 'Per-process watt attribution (~W), battery drain (min lost) & one-click throttle')
         self.blame_proc_rows = []
         for i in range(6):
             row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -757,14 +759,30 @@ class MainWindow(Adw.ApplicationWindow):
             title_l.add_css_class('kv-val')
             meta_l = Gtk.Label(label='0.0% • 0/s', xalign=1.0)
             meta_l.add_css_class('kv-key')
+            freeze_btn = Gtk.Button(label='Freeze')
+            freeze_btn.add_css_class('profile-pill')
+            freeze_btn.set_sensitive(False)
+            freeze_btn._pid = 0
+            freeze_btn._pname = ''
+            freeze_btn.connect('clicked', self._on_freeze_proc_clicked)
             top_l.append(title_l)
             top_l.append(meta_l)
+            top_l.append(freeze_btn)
             pbar = Gtk.ProgressBar()
             pbar.set_fraction(0.0)
             row_box.append(top_l)
             row_box.append(pbar)
             proc_card.append(row_box)
-            self.blame_proc_rows.append((title_l, meta_l, pbar))
+            self.blame_proc_rows.append((title_l, meta_l, pbar, freeze_btn))
+
+        self.paused_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, margin_top=6)
+        self.paused_box.set_visible(False)
+        paused_lbl = Gtk.Label(label='Frozen:', xalign=0.0)
+        paused_lbl.add_css_class('kv-key')
+        self.paused_box.append(paused_lbl)
+        self.paused_pills_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.paused_box.append(self.paused_pills_box)
+        proc_card.append(self.paused_box)
 
         hw_card = self._card('Active Bus Devices & dGPU Watch')
         r_dgpu, self.blame_dgpu_lbl = self._kv_row('Discrete GPU (D0)', 'Scanning...')
@@ -1060,18 +1078,31 @@ class MainWindow(Adw.ApplicationWindow):
                     return GLib.SOURCE_REMOVE
 
                 procs = data.get('processes', [])
-                for idx, (tl, ml, pb) in enumerate(self.blame_proc_rows):
+                for idx, (tl, ml, pb, fbtn) in enumerate(self.blame_proc_rows):
                     if idx < len(procs):
                         pr = procs[idx]
+                        pid = int(pr.get('pid', 0) or 0)
+                        pname = str(pr.get('name', '?'))
                         cpu = float(pr.get('cpu_pct', 0.0) or 0.0)
                         csw = float(pr.get('wakeups_per_sec', 0.0) or 0.0)
-                        tl.set_label(f"#{idx + 1}  {pr.get('name', '?')}  (PID {pr.get('pid', 0)})")
-                        ml.set_label(f"{cpu:.1f}% CPU  •  {csw:.0f}/s wakeups")
+                        est_w = float(pr.get('est_watts', 0.0) or 0.0)
+                        mins = float(pr.get('minutes_lost', 0.0) or 0.0)
+                        drain_s = f" • -{mins:.0f}m" if mins >= 0.5 else ''
+                        watt_s = f"~{est_w:.1f}W{drain_s} • " if est_w >= 0.05 else ''
+                        tl.set_label(f"#{idx + 1}  {pname}  (PID {pid})")
+                        ml.set_label(f"{watt_s}{cpu:.1f}% CPU  •  {csw:.0f}/s")
                         pb.set_fraction(max(0.02, min(1.0, (cpu * 0.7 + min(csw / 20.0, 30.0)) / 100.0)))
+                        fbtn._pid = pid
+                        fbtn._pname = pname
+                        fbtn.set_label('Resume' if pid in self._paused_pids else 'Freeze')
+                        fbtn.set_sensitive(pid > 1)
                     else:
                         tl.set_label(f'#{idx + 1}  Idle')
                         ml.set_label('0.0%')
                         pb.set_fraction(0.0)
+                        fbtn._pid = 0
+                        fbtn._pname = ''
+                        fbtn.set_sensitive(False)
 
                 pci = data.get('active_pci', [])
                 usb = data.get('active_usb', [])
@@ -1084,6 +1115,43 @@ class MainWindow(Adw.ApplicationWindow):
             GLib.idle_add(_apply_ui)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_freeze_proc_clicked(self, btn: Gtk.Button) -> None:
+        pid = getattr(btn, '_pid', 0)
+        pname = getattr(btn, '_pname', '')
+        if pid <= 1:
+            return
+        action = 'resume' if pid in self._paused_pids else 'pause'
+        self._dispatch_throttle(pid, pname, action)
+
+    def _dispatch_throttle(self, pid: int, pname: str, action: str) -> None:
+        res = throttle_process(pid, action=action)
+        if not res.get('ok'):
+            self.toast(f"! {res.get('error', 'Failed')}")
+            return
+        if action == 'pause':
+            self._paused_pids[pid] = pname or res.get('name', str(pid))
+            self.toast(f"⏸ Frozen {self._paused_pids[pid]} (PID {pid}) — 0W background draw")
+        else:
+            self._paused_pids.pop(pid, None)
+            self.toast(f"▶ Resumed {pname or res.get('name', pid)} (PID {pid})")
+        self._rebuild_paused_pills()
+        self._run_blame_async()
+
+    def _rebuild_paused_pills(self) -> None:
+        if not hasattr(self, 'paused_pills_box'):
+            return
+        child = self.paused_pills_box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.paused_pills_box.remove(child)
+            child = nxt
+        for pid, name in list(self._paused_pids.items()):
+            b = Gtk.Button(label=f"▶ {name} ({pid})")
+            b.add_css_class('profile-pill')
+            b.connect('clicked', lambda *_b, p=pid, n=name: self._dispatch_throttle(p, n, 'resume'))
+            self.paused_pills_box.append(b)
+        self.paused_box.set_visible(bool(self._paused_pids))
 
     def refresh_status(self) -> None:
         if self._refresh_busy:

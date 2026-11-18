@@ -4,6 +4,7 @@ import glob
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import time
 from copy import deepcopy
@@ -1536,5 +1537,78 @@ def status_snapshot() -> dict:
         'config': load_config(),
         'sensor': load_sensor_config(),
     }
+
+
+SAFE_UNTOUCHABLE_PROCS = frozenset({
+    'systemd', 'init', 'gnome-shell', 'mutter', 'xorg', 'xwayland',
+    'dbus-daemon', 'dbus-broker', 'pipewire', 'wireplumber', 'pulseaudio',
+    'hyprland', 'sway', 'kwin_wayland', 'kwin_x11',
+    'kworker', 'irq/', 'rcu_', 'migration/', 'watchdog',
+    'ff-power-manager', 'ff-presence-session', 'ff-presence-sensor',
+})
+
+
+def estimate_process_power_impact(
+    procs: list[dict],
+    sys_watts: float,
+    energy_now_wh: float | None = None,
+    total_score_override: float | None = None,
+) -> list[dict]:
+    """Attribute dynamic system watts and remaining battery minutes lost to active processes."""
+    w_sys = max(0.0, float(sys_watts or 0.0))
+    w_base = min(3.2, w_sys * 0.35) if w_sys > 0.0 else 0.0
+    w_dyn = max(0.0, w_sys - w_base)
+    weights = [
+        max(0.0, float(p.get('cpu_pct', 0.0)) * 4.0 + float(p.get('wakeups_per_sec', 0.0)) * 0.05)
+        for p in procs
+    ]
+    total_w = float(total_score_override) if (total_score_override and total_score_override > 0) else sum(weights)
+    e_wh = float(energy_now_wh) if (energy_now_wh is not None and energy_now_wh > 0) else 0.0
+
+    enriched = []
+    for p, wt in zip(procs, weights):
+        item = dict(p)
+        est_w = round(min(w_sys, w_dyn * (wt / total_w)), 2) if (total_w > 0.0 and w_dyn > 0.0) else 0.0
+        mins_lost = 0.0
+        if e_wh > 0.0 and w_sys > 0.5 and est_w > 0.01:
+            hrs_now = e_wh / w_sys
+            hrs_without = e_wh / max(0.8, w_sys - est_w)
+            mins_lost = round(min(600.0, max(0.0, (hrs_without - hrs_now) * 60.0)), 1)
+        item['est_watts'] = est_w
+        item['minutes_lost'] = mins_lost
+        enriched.append(item)
+    return enriched
+
+
+def throttle_process(pid: int, action: str = 'pause', proc_root: str | pathlib.Path = '/proc') -> dict:
+    """Safely pause (SIGSTOP), resume (SIGCONT), or deprioritize (nice+ionice) a background process."""
+    if action not in ('pause', 'resume', 'lowprio'):
+        return {'ok': False, 'error': f'Unsupported action: {action}'}
+    if pid <= 1 or pid == os.getpid():
+        return {'ok': False, 'error': f'Refusing to touch protected PID {pid}'}
+
+    comm_path = pathlib.Path(proc_root) / str(pid) / 'comm'
+    comm = (read_text(comm_path) or '').strip()
+    if not comm:
+        return {'ok': False, 'error': f'Process {pid} no longer exists'}
+    comm_lc = comm.lower()
+    if any(comm_lc == p or comm_lc.startswith(p) for p in SAFE_UNTOUCHABLE_PROCS):
+        return {'ok': False, 'error': f'Refusing to throttle critical system process ({comm})'}
+
+    try:
+        if action == 'pause':
+            os.kill(pid, signal.SIGSTOP)
+        elif action == 'resume':
+            os.kill(pid, signal.SIGCONT)
+        elif action == 'lowprio':
+            os.setpriority(os.PRIO_PROCESS, pid, 19)
+            subprocess.run(['/usr/bin/ionice', '-c', '3', '-p', str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        return {'ok': True, 'pid': pid, 'name': comm, 'action': action}
+    except PermissionError:
+        return {'ok': False, 'error': f'Permission denied for {comm} (PID {pid})'}
+    except ProcessLookupError:
+        return {'ok': False, 'error': f'Process {pid} exited'}
+    except Exception as exc:
+        return {'ok': False, 'error': str(exc)}
 
 
