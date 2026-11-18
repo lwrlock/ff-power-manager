@@ -1,0 +1,30 @@
+#!/bin/sh
+# FF Power Manager v2.0: Universal s2idle Backpack Battery Drain Guard
+STATE_DIR="/run/ff-power-manager/sleep-guard"
+case "$1" in
+    pre)
+        mkdir -p "$STATE_DIR"
+        : > "$STATE_DIR/disabled_wakeups"
+        for dev in XHCI TXHC TDM0 TRP0 TRP1 XHC0 XHC1; do
+            if grep -qE "^${dev}[[:space:]].*\\*enabled" /proc/acpi/wakeup 2>/dev/null; then
+                echo "$dev" > /proc/acpi/wakeup 2>/dev/null && echo "$dev" >> "$STATE_DIR/disabled_wakeups"
+            fi
+        done
+        if [ -w /sys/firmware/acpi/platform_profile ]; then
+            echo "low-power" > /sys/firmware/acpi/platform_profile 2>/dev/null || true
+        fi
+        for iface in $(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}'); do
+            iw dev "$iface" set power_save on 2>/dev/null || true
+        done
+        ;;
+    post)
+        if [ -f "$STATE_DIR/disabled_wakeups" ]; then
+            while read -r dev; do
+                [ -n "$dev" ] && echo "$dev" > /proc/acpi/wakeup 2>/dev/null || true
+            done < "$STATE_DIR/disabled_wakeups"
+            rm -f "$STATE_DIR/disabled_wakeups"
+        fi
+        /usr/local/lib/ff-power-manager/ff-power-helper apply >/dev/null 2>&1 || true
+        ;;
+esac
+exit 0

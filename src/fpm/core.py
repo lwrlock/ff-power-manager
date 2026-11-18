@@ -369,6 +369,33 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
         write_if_changed(ctrl, 'auto')
 
 
+
+def detect_cpu_topology() -> tuple[list[int], list[int], list[int]]:
+    """Dynamically classify online CPUs into (p_cores, e_cores, lpe_cores) on any Intel/AMD CPU."""
+    freqs = {}
+    for p in glob.glob('/sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq'):
+        try:
+            cid = int(pathlib.Path(p).parts[-3][3:])
+            freqs[cid] = int(pathlib.Path(p).read_text().strip())
+        except Exception:
+            pass
+    if not freqs:
+        all_cpus = sorted(int(p.split('/cpu')[-1]) for p in glob.glob('/sys/devices/system/cpu/cpu[0-9]*') if p.split('/cpu')[-1].isdigit())
+        return all_cpus, [], []
+    unique_f = sorted(set(freqs.values()), reverse=True)
+    if len(unique_f) >= 3:
+        p_t, lpe_t = unique_f[0], unique_f[-1]
+        p_cores = sorted(c for c, f in freqs.items() if f >= p_t - 200000)
+        lpe_cores = sorted(c for c, f in freqs.items() if f <= lpe_t + 100000)
+        e_cores = sorted(c for c in freqs if c not in p_cores and c not in lpe_cores)
+        return p_cores, e_cores, lpe_cores
+    elif len(unique_f) == 2 and (unique_f[0] - unique_f[1]) >= 400000:
+        p_t = unique_f[0]
+        p_cores = sorted(c for c, f in freqs.items() if f >= p_t - 200000)
+        e_cores = sorted(c for c in freqs if c not in p_cores)
+        return p_cores, e_cores, []
+    return sorted(freqs.keys()), [], []
+
 def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False) -> None:
     """
     MacBook Dynamic Load-Aware Hybrid Topology:
@@ -506,7 +533,7 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
     is_max_bat = mode in ('max_battery', 'maximum_battery')
 
     # Native Intel Xe driver (Arrow Lake-H / Lunar Lake tile* gt*/freq0)
-    for gt_freq in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0'):
+    for gt_freq in glob.glob('/sys/devices/pci0000:00/*/tile*/gt*/freq0'):
         is_gt1 = 'gt1' in gt_freq
         power_prof = os.path.join(gt_freq, 'power_profile')
         if os.path.exists(power_prof):
@@ -744,31 +771,30 @@ def set_smart_media_mode(active: bool) -> None:
     on_bat = on_battery_from_sysfs()
     state_file = RUN_DIR / 'media.state'
     if active and on_bat:
-        # P-cores (0..5): 400 MHz deep idle floor + 3.6 GHz burst ceiling with balance_power (EPB 6)
-        for c in range(6):
+        p_cores, e_cores, lpe_cores = detect_cpu_topology()
+        for c in p_cores:
             cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '3600000')
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '6')
-        # E-cores (6..13): 2.6 GHz ceiling
-        for c in range(6, 14):
+        for c in e_cores:
             cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '2600000')
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_power')
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '8')
-        # Low-Power Island E-cores (14..15)
-        for c in (14, 15):
+        for c in lpe_cores:
             cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
             write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '1800000')
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '12')
-        # Ensure Media Engine (gt1) has responsive floor for 4K 60fps decode; gt0 uses RPN floor (800 MHz)
-        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt1/freq0/min_freq', '400')
-        gt0_rpn = read_text('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0/rpn_freq') or '800'
-        write_if_changed('/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0/min_freq', gt0_rpn)
+        for gt1_p in glob.glob('/sys/devices/pci0000:00/*/tile*/gt1/freq0/min_freq'):
+            write_if_changed(gt1_p, '400')
+        for gt0_dir in glob.glob('/sys/devices/pci0000:00/*/tile*/gt0/freq0'):
+            gt0_rpn = read_text(os.path.join(gt0_dir, 'rpn_freq')) or '800'
+            write_if_changed(os.path.join(gt0_dir, 'min_freq'), gt0_rpn)
         try:
             state_file.write_text('active\n')
         except Exception:
@@ -832,6 +858,20 @@ def apply(mode: str, cfg: dict | None = None) -> None:
         s['wifi_power_save'] = False
         s['hwp_dynamic_boost'] = 'on'
         s['gpu_runtime_pm'] = 'auto'
+    elif mode in ('max_battery', 'maximum_battery'):
+        base_mode = 'battery'
+        s = deepcopy(cfg['battery'])
+        s['gnome_profile'] = 'power-saver'
+        s['epp'] = 'power'
+        s['pcie_aspm'] = 'powersupersave'
+        s['turbo'] = False
+    elif mode == 'cool_quiet':
+        base_mode = 'battery' if on_battery_from_sysfs() else 'ac'
+        s = deepcopy(cfg[base_mode])
+        s['gnome_profile'] = 'balanced'
+        s['epp'] = 'balance_power'
+        s['pcie_aspm'] = 'powersave'
+        s['hwp_dynamic_boost'] = 'off'
     elif mode == 'battery':
         base_mode = 'battery'
         s = cfg['battery']
@@ -989,11 +1029,11 @@ def pcie_aspm_current() -> str:
 
 
 def gpu_min_freq_current() -> str:
-    for node in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0/act_freq'):
+    for node in glob.glob('/sys/devices/pci0000:00/*/tile*/gt*/freq0/act_freq'):
         txt = read_text(node)
         if txt and txt.strip():
             return f"{txt.strip()} MHz (Intel Arc Xe-LPG+)"
-    for node in glob.glob('/sys/devices/pci0000:00/0000:00:02.0/tile*/gt*/freq0/cur_freq'):
+    for node in glob.glob('/sys/devices/pci0000:00/*/tile*/gt*/freq0/cur_freq'):
         txt = read_text(node)
         if txt and txt.strip():
             return f"{txt.strip()} MHz (Intel Arc Xe-LPG+)"
@@ -1116,9 +1156,13 @@ def get_lenovo_features() -> dict:
 
 def set_lenovo_feature(name: str, value: bool | str | int) -> bool:
     if name == 'conservation_mode':
+        on = value in (True, 1, '1', 'on')
         node = LENOVO_VPC_PATH / 'conservation_mode'
-        val = '1' if value in (True, 1, '1', 'on') else '0'
-        return write_if_changed(node, val)
+        if node.exists():
+            return write_if_changed(node, '1' if on else '0')
+        for bat_thresh in sorted(glob.glob('/sys/class/power_supply/BAT*/charge_control_end_threshold')):
+            return write_if_changed(bat_thresh, '80' if on else '100')
+        return False
     elif name == 'fn_lock':
         node = LENOVO_VPC_PATH / 'fn_lock'
         val = '1' if value in (True, 1, '1', 'on') else '0'

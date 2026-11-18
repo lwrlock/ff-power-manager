@@ -5,7 +5,12 @@ cd "$(dirname "$0")"
 step() { printf '\n[%s] %s\n' "$1" "$2"; }
 
 step '1/10' 'System Dependencies & Toolchains (C/ASM compilers, Python, GTK4)'
-sudo dnf install -y gcc make python3-gobject gtk4 libadwaita iw power-profiles-daemon polkit intel-media-driver libva-utils
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update
+  sudo apt-get install -y gcc binutils make python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 iw power-profiles-daemon policykit-1 libva-utils || true
+elif command -v dnf >/dev/null 2>&1; then
+  sudo dnf install -y gcc make python3-gobject gtk4 libadwaita iw power-profiles-daemon polkit intel-media-driver libva-utils
+fi
 
 step '2/10' 'Cleaning Legacy Components'
 ./scripts/cleanup-legacy.sh --apply
@@ -108,6 +113,9 @@ sudo install -m644 systemd/ff-power-apply.service /etc/systemd/system/
 sudo install -m644 systemd/ff-presence-sensor.service /etc/systemd/system/
 sudo install -m644 systemd/ff-power-autoboost.service /etc/systemd/system/
 sudo install -m644 systemd/ff-presence-session.service /usr/local/lib/systemd/user/
+if [ -f sleep-hook/ff-sleep-guard ]; then
+  sudo install -m755 sleep-hook/ff-sleep-guard /lib/systemd/system-sleep/ff-sleep-guard
+fi
 sudo install -m644 udev/90-ff-power-manager.rules /etc/udev/rules.d/
 sudo install -m644 applications/com.ff.PowerManager.desktop /usr/local/share/applications/
 sudo install -m644 applications/com.ff.PowerManager.TUI.desktop /usr/local/share/applications/
@@ -218,7 +226,7 @@ fi
 
 step '10/10' 'Complete'
 echo '==================================================================='
-echo '  FF Power Manager (v1.2.0 - Native C & Assembly) Installed!      '
+echo '  FF Power Manager (v2.0.0 - Universal Linux & C/ASM Engine) Ready!'
 echo '==================================================================='
 echo '  ✓ Terminal Dashboard      : ff-tui  (or ffctl tui)'
 echo '  ✓ Hardware Power Status   : ffctl status'

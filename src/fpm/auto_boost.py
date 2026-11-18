@@ -61,6 +61,11 @@ IDLE_AWARE_HEAVY_PROCESSES = {
     'llama-server',
     'llama-cli',
     'llama-bench',
+    'python3',
+    'node',
+    'cmake',
+    'ld',
+    'lld',
 }
 
 KNOWN_GAMES = {
@@ -131,6 +136,23 @@ def get_cpu_load(prev_idle: float, prev_total: float) -> tuple[float, float, flo
     except Exception:
         return 0.0, prev_idle, prev_total
 
+
+
+def get_max_pkg_temp_c() -> int:
+    max_c = 0
+    for p in glob.glob('/sys/class/hwmon/hwmon*/temp*_input'):
+        try:
+            name_p = os.path.join(os.path.dirname(p), 'name')
+            if os.path.exists(name_p):
+                dev = open(name_p).read().strip()
+                if dev not in ('coretemp', 'k10temp', 'zenpower'):
+                    continue
+            val = int(open(p).read().strip()) // 1000
+            if 20 <= val <= 115 and val > max_c:
+                max_c = val
+        except Exception:
+            pass
+    return max_c
 
 def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
     signal.signal(signal.SIGINT, _sig_handler)
@@ -257,6 +279,23 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                         optimize_desktop_responsiveness()
                     except Exception as exc:
                         sys.stderr.write(f"Background hybrid topology tuning failed: {exc}\n")
+
+            if boosted and get_max_pkg_temp_c() >= 90:
+                if not getattr(run_watcher, '_thermal_capped', False):
+                    run_watcher._thermal_capped = True
+                    sys.stdout.write("Auto Dynamic Boost: Thermal Guardrail (>=90C). Softening PL1 to 'ac' sustained limits.\n")
+                    sys.stdout.flush()
+                    try:
+                        set_rapl_limits('ac')
+                    except Exception:
+                        pass
+            elif getattr(run_watcher, '_thermal_capped', False) and get_max_pkg_temp_c() <= 78:
+                run_watcher._thermal_capped = False
+                if boosted:
+                    try:
+                        set_rapl_limits('extreme_performance')
+                    except Exception:
+                        pass
 
             sleep_time = poll_interval
 

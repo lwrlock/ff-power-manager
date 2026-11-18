@@ -30,6 +30,13 @@ DEFAULT = {
 }
 
 
+
+def _find_battery_dir() -> pathlib.Path | None:
+    for p in sorted(pathlib.Path('/sys/class/power_supply').glob('BAT*')):
+        if (p / 'capacity').exists():
+            return p
+    return None
+
 def load_config() -> dict:
     out = dict(DEFAULT)
     try:
@@ -50,7 +57,7 @@ def load_config() -> dict:
     except Exception:
         out['away_delay'] = 20
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
-    out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', False))
+    out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', True))
     out['screen_off_on_away'] = bool(out.get('screen_off_on_away', True))
     out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
     out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
@@ -71,6 +78,9 @@ class PresenceController:
         self.is_dimmed = False
         self.saved_brightness = None
         self._last_checked_mode = None
+        self._promo_idle_60hz = False
+        self._idle_watch_id = 0
+        self._active_watch_id = 0
         try:
             RUN_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -78,6 +88,25 @@ class PresenceController:
         self.dir_file = Gio.File.new_for_path(str(RUN_DIR))
         self.monitor = self.dir_file.monitor_directory(Gio.FileMonitorFlags.NONE, None)
         self.monitor.connect('changed', self._fs_changed)
+        try:
+            self.conf_file = Gio.File.new_for_path(str(CONF))
+            self.conf_monitor = self.conf_file.monitor_file(Gio.FileMonitorFlags.NONE, None)
+            self.conf_monitor.connect('changed', self._conf_changed)
+        except Exception:
+            self.conf_monitor = None
+        try:
+            self.session.signal_subscribe(
+                'org.gnome.Mutter.IdleMonitor',
+                'org.gnome.Mutter.IdleMonitor',
+                'WatchFired',
+                '/org/gnome/Mutter/IdleMonitor/Core',
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_idle_watch_fired,
+            )
+            self._arm_promo_idle_watch()
+        except Exception:
+            pass
         try:
             self.sys_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
             self.sys_bus.signal_subscribe(
@@ -107,14 +136,94 @@ class PresenceController:
                     mode = txt
             except Exception:
                 pass
+        # Record OLED & ProMotion energy savings (~3s tick)
+        try:
+            sav_p = RUN_DIR / 'savings.json'
+            if not getattr(self, '_sav_loaded', False):
+                self._sav_loaded = True
+                if sav_p.exists():
+                    d = json.loads(sav_p.read_text())
+                    self._sav_off_sec = float(d.get('screen_off_sec', 0.0))
+                    self._sav_wh = float(d.get('wh_saved', 0.0))
+                else:
+                    self._sav_off_sec = 0.0
+                    self._sav_wh = 0.0
+            if self.screen_off_by_fpm:
+                self._sav_off_sec += 3.0
+                self._sav_wh += (4.5 * 3.0) / 3600.0
+            elif getattr(self, '_promo_idle_60hz', False):
+                self._sav_wh += (1.2 * 3.0) / 3600.0
+            sav_p.write_text(json.dumps({
+                'screen_off_sec': round(self._sav_off_sec, 1),
+                'wh_saved': round(self._sav_wh, 3),
+            }))
+        except Exception:
+            pass
+
+        # One-Shot 100% Charge Watchdog: restore %80 conservation when full
+        oneshot_flag = CONF.parent / 'oneshot_100'
+        if oneshot_flag.exists():
+            try:
+                _bd = _find_battery_dir()
+                cap_p = (_bd / 'capacity') if _bd else pathlib.Path('/nonexistent')
+                stat_p = (_bd / 'status') if _bd else pathlib.Path('/nonexistent')
+                cap_val = int(cap_p.read_text().strip()) if cap_p.exists() else 0
+                stat_val = stat_p.read_text().strip() if stat_p.exists() else ''
+                if cap_val >= 99 or stat_val == 'Full':
+                    oneshot_flag.unlink()
+                    subprocess.run(['/usr/local/bin/ffctl', 'conservation', 'on'], check=False)
+                    subprocess.run(['notify-send', 'FF Power Manager', '%100 şarj tamamlandı — %80 pil koruma tekrar aktif edildi.'], check=False)
+            except Exception:
+                pass
+
         # Smart battery < 30% check for automatic 60Hz power saving
         try:
-            cap_p = pathlib.Path('/sys/class/power_supply/BAT1/capacity')
+            _bdir = _find_battery_dir(); cap_p = (_bdir / 'capacity') if _bdir else pathlib.Path('/nonexistent')
             if cap_p.exists() and on_battery_from_sysfs() and int(cap_p.read_text().strip()) <= 30:
                 mode = 'max_battery'
         except Exception:
             pass
-        if self._last_checked_mode != mode:
+        cinema_apps = {'stremio', 'mpv', 'vlc', 'celluloid', 'kodi', 'clapper'}
+        cinema_active = False
+        try:
+            for cp in pathlib.Path('/proc').glob('[0-9]*/comm'):
+                try:
+                    cname = cp.read_text(encoding='utf-8', errors='ignore').strip().lower()
+                    if cname in cinema_apps:
+                        cinema_active = True
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        if cinema_active != getattr(self, '_last_cinema_active', None):
+            self._last_cinema_active = cinema_active
+            try:
+                (RUN_DIR / 'active.context').write_text('cinema\n' if cinema_active else 'normal\n')
+                gs = Gio.Settings.new('org.gnome.settings-daemon.plugins.color')
+                if cinema_active:
+                    self._saved_night_light = gs.get_boolean('night-light-enabled')
+                    if self._saved_night_light:
+                        gs.set_boolean('night-light-enabled', False)
+                else:
+                    if getattr(self, '_saved_night_light', False):
+                        gs.set_boolean('night-light-enabled', True)
+                        self._saved_night_light = False
+            except Exception:
+                pass
+            self._last_checked_mode = None
+
+        if cinema_active and mode in ('battery', 'max_battery'):
+            mode = 'ac'
+
+        if (not on_battery_from_sysfs() or cinema_active) and self._promo_idle_60hz:
+            self._promo_idle_60hz = False
+            self._last_checked_mode = None
+
+        if self._promo_idle_60hz and on_battery_from_sysfs() and not cinema_active:
+            pass
+        elif self._last_checked_mode != mode:
             self._last_checked_mode = mode
             self._update_refresh_rate(mode)
 
@@ -272,22 +381,39 @@ class PresenceController:
                 return
 
             current_mode = None
-            mode_120 = None
-            mode_60 = None
+            preferred_res = None
+            for m in monitors[0][1]:
+                if m[6].get('is-current'):
+                    current_mode = m[0]
+                    break
+                if m[6].get('is-preferred') and preferred_res is None:
+                    preferred_res = m[0].split('@')[0]
+            active_res = current_mode.split('@')[0] if current_mode else preferred_res
+            if not active_res:
+                return
+
+            mode_high = None
+            high_hz = 0.0
+            mode_low = None
             for m in monitors[0][1]:
                 m_id = m[0]
-                if m[6].get('is-current'):
-                    current_mode = m_id
-                if m_id.startswith('2880x1800@120'):
-                    if '+vrr' in m_id or mode_120 is None:
-                        mode_120 = m_id
-                elif m_id.startswith('2880x1800@60'):
-                    mode_60 = m_id
+                if not m_id.startswith(active_res + '@'):
+                    continue
+                try:
+                    hz = float(m_id.split('@', 1)[1].split('+', 1)[0])
+                except Exception:
+                    continue
+                if 58.0 <= hz <= 62.0 and mode_low is None:
+                    mode_low = m_id
+                if hz > high_hz + 1.0 or (abs(hz - high_hz) <= 1.0 and '+vrr' in m_id):
+                    high_hz = hz
+                    mode_high = m_id
 
-            target_mode = (mode_60 if want_60hz else mode_120) or current_mode
+            target_mode = (mode_low if want_60hz else mode_high) or current_mode
             if not target_mode:
                 return
-            label_str = '60 Hz (Power Saver)' if want_60hz else '120 Hz (ProMotion OLED)'
+            high_label = f"{int(round(high_hz))} Hz (ProMotion)" if high_hz else "120 Hz"
+            label_str = '60 Hz (Power Saver)' if want_60hz else high_label
 
             if current_mode == target_mode:
                 try:
@@ -334,6 +460,89 @@ class PresenceController:
                 self._update_refresh_rate(mode)
         except Exception:
             pass
+
+    def _arm_promo_idle_watch(self) -> None:
+        if self._idle_watch_id:
+            return
+        try:
+            res = self.session.call_sync(
+                'org.gnome.Mutter.IdleMonitor',
+                '/org/gnome/Mutter/IdleMonitor/Core',
+                'org.gnome.Mutter.IdleMonitor',
+                'AddIdleWatch',
+                GLib.Variant('(t)', (8000,)),
+                None, Gio.DBusCallFlags.NONE, 1000, None,
+            )
+            self._idle_watch_id = int(res.unpack()[0])
+        except Exception:
+            self._idle_watch_id = 0
+
+    def _arm_promo_active_watch(self) -> None:
+        if self._active_watch_id:
+            return
+        try:
+            res = self.session.call_sync(
+                'org.gnome.Mutter.IdleMonitor',
+                '/org/gnome/Mutter/IdleMonitor/Core',
+                'org.gnome.Mutter.IdleMonitor',
+                'AddUserActiveWatch',
+                None, None, Gio.DBusCallFlags.NONE, 1000, None,
+            )
+            self._active_watch_id = int(res.unpack()[0])
+        except Exception:
+            self._active_watch_id = 0
+
+    def _on_idle_watch_fired(self, _bus, _sender, _path, _iface, _signal, params) -> None:
+        try:
+            watch_id = int(params.unpack()[0])
+        except Exception:
+            return
+        if watch_id == self._idle_watch_id:
+            if (
+                on_battery_from_sysfs()
+                and self.cfg.get('promotion_120hz', True)
+                and self.cfg.get('force_120hz_on_battery', True)
+                and not getattr(self, '_last_cinema_active', False)
+                and self._get_display_power_save() == 0
+                and not self._promo_idle_60hz
+            ):
+                self._promo_idle_60hz = True
+                self._update_refresh_rate('max_battery')
+                try:
+                    (RUN_DIR / 'refresh.rate').write_text('60 Hz (ProMotion Idle)')
+                except Exception:
+                    pass
+                self._arm_promo_active_watch()
+        elif watch_id == self._active_watch_id:
+            self._active_watch_id = 0
+            if self._promo_idle_60hz:
+                self._promo_idle_60hz = False
+                self._last_checked_mode = None
+                mode = 'ac' if not on_battery_from_sysfs() else 'battery'
+                self._update_refresh_rate(mode)
+
+    def _set_wireless_sleep(self, sleeping: bool) -> None:
+        try:
+            if sleeping:
+                res = subprocess.run(['bluetoothctl', 'devices', 'Connected'], capture_output=True, text=True, timeout=1.0)
+                if not res.stdout.strip():
+                    subprocess.run(['bluetoothctl', 'power', 'off'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.0)
+                    self._bt_slept_by_fpm = True
+            else:
+                if getattr(self, '_bt_slept_by_fpm', False):
+                    subprocess.run(['bluetoothctl', 'power', 'on'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.0)
+                    self._bt_slept_by_fpm = False
+        except Exception:
+            pass
+
+    def _conf_changed(self, _monitor, _file, _other, _event_type) -> None:
+        GLib.idle_add(self._apply_conf_now)
+
+    def _apply_conf_now(self) -> bool:
+        self.cfg = load_config()
+        self._last_checked_mode = None
+        self._periodic_power_check()
+        return GLib.SOURCE_REMOVE
 
     def _lock(self) -> None:
         subprocess.run(['/usr/bin/loginctl', 'lock-session'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -414,11 +623,11 @@ class PresenceController:
         except Exception:
             pass
 
-        # 3. Active audio sink output check (PipeWire / PulseAudio)
+        # 3. Native ALSA/PipeWire PCM stream check (zero subprocess fork every 3s)
         try:
-            p = subprocess.run(['pactl', 'list', 'sinks', 'short'], capture_output=True, text=True, timeout=0.5)
-            if 'RUNNING' in p.stdout:
-                return True
+            for pcm_status in pathlib.Path('/proc/asound').glob('card*/pcm*p/sub*/status'):
+                if 'RUNNING' in pcm_status.read_text(encoding='utf-8', errors='ignore'):
+                    return True
         except Exception:
             pass
 
@@ -452,6 +661,7 @@ class PresenceController:
             try:
                 self._set_display(False)
                 self.screen_off_by_fpm = True
+                self._set_wireless_sleep(True)
             except Exception:
                 pass
         return GLib.SOURCE_REMOVE
@@ -472,6 +682,7 @@ class PresenceController:
                 try:
                     self._set_display(True)
                     self.screen_off_by_fpm = False
+                    self._set_wireless_sleep(False)
                 except Exception:
                     pass
         elif state == 'absent':

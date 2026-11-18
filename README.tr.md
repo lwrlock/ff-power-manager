@@ -1,103 +1,43 @@
-# FF Power Manager
+# FF Power Manager v2.0
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: Linux](https://img.shields.io/badge/Platform-Linux%20%2F%20Fedora-teal.svg)](https://getfedora.org)
-[![Desktop: GNOME](https://img.shields.io/badge/Desktop-GNOME%20%2F%20Wayland-orange.svg)](https://www.gnome.org)
-[![Engine: C & x86_64 ASM](https://img.shields.io/badge/Engine-C%20%26%20ASM-success.svg)](#)
-[![Developed with AI](https://img.shields.io/badge/Developed%20with-AI%20Assistance-blueviolet.svg)](#-yapay-zekâ-desteğiyle-geliştirildi-ai-assisted)
+[![CI](https://github.com/lwrlock/ff-power-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/lwrlock/ff-power-manager/actions/workflows/ci.yml)
+[![Platform: Ubuntu & Fedora](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Fedora-teal.svg)](https://ubuntu.com)
+[![Desktop: GNOME Wayland](https://img.shields.io/badge/Desktop-GNOME%20%2F%20Wayland-orange.svg)](https://www.gnome.org)
+[![Release: v2.0.0](https://img.shields.io/badge/Release-v2.0.0-blueviolet.svg)](https://github.com/lwrlock/ff-power-manager/releases/tag/v2.0.0)
 
 [ [English](README.md) | Türkçe ]
 
-Linux (Fedora / GNOME / Wayland) için geliştirilmiş **C ve x86_64 Assembly** motoruyla çalışan, ultra-hafif, sıfır gecikmeli güç yöneticisi ve Lenovo ToF insan varlığı algılama aracı.
+**Linux dizüstü bilgisayarlara MacBook Pro pil ömrü, pilde 0 ms ProMotion (`60↔120 Hz`), OLED Yanık Koruması, ToF İnsan Varlığı Radarı ve `s2idle` Çanta Pil Koruması kazandıran akıllı güç yönetim paketi.**
 
-Test Edilen Donanım: **Lenovo IdeaPad Pro 5 14IAH10 / Yoga Pro** (Intel Core Ultra 9 285H Arrow Lake, Intel Arc Graphics, Samsung 2.8K 120Hz OLED, 87 Wh batarya).
-
----
-
-## 🌟 Öne Çıkan Yetenekler ve Yenilikler
-
-- **⚡ C & x86_64 Assembly Motoru (%0.0 CPU Yükü, < 1 MB RAM):** Doğrudan Linux çekirdek çağrıları (syscall) ve el ile optimize edilmiş montaj (assembly) kodlarıyla sensör paketlerini alt-mikrosaniyede çözer; arka planda sıfır işlemci yüküyle çalışır.
-- **🔋 Boşta ~5W Tüketim Optimizasyonu (Windows Seviyesi Pil Tasarrufu):**
-  - **Derin C-State Desteği (Package C8/C10):** Intel LPSS PCI köprüleri optimize edilerek işlemci çipsetinin derin uykuya geçmesi sağlandı.
-  - **Intel Arc GPU GuC SLPC Güç Tasarrufu:** GPU boşta `power_saving` moduna alınarak saat frekansı ve render standby (RC6) derin uykusu serbest bırakıldı.
-  - **TUI & Panel Self Refresh (PSR):** Terminal arayüzü GPU çizim yükünü azaltarak panelin PSR modunda kalmasını sağlar.
-  - **Gelişmiş Çekirdek & I/O Zamanlayıcıları:** `laptop_mode=5`, `dirty_writeback_centisecs=6000`, `nmi_watchdog=0`, SCSI ALPM `med_power_with_dipm` ve WiFi 802.11 güç tasarrufu.
-- **📡 Canlı ToF Radarı ve Milimetre Hassasiyeti:** ST VL53L1 kızılötesi uçuş süresi (ToF) sensörünün 35 baytlık ham HID paketlerini doğrudan dinler. Mesafeyi 16-bit milimetre hassasiyetiyle anlık ölçer (`70 cm / 120 cm`). Masadan kalkıldığında ekran kararır, dönüldüğünde anında açılır.
-- **🖥️ Dinamik 60 Hz / 120 Hz + VRR Geçişi:** Bataryaya geçildiğinde Samsung 2.8K OLED ekran otomatik olarak **60 Hz** moduna alınarak ~2W tasarruf sağlanır; şarja takıldığında **120 Hz + VRR** moduna geri döner.
-- **🛡️ GNOME Arayüz Koruması:** GNOME'un arayüzde donma ve gecikmelere yol açan `power-saver` modunu dengeli tutarak her koşulda 60 FPS akıcılık sağlar.
-- **📊 btop Tarzı Dinamik Terminal Dashboard (`ff-tui`):** Çok sekmeli (`[1] Overview`, `[2] Battery`, `[3] AC Power`), tek tuşla donanımda doğrulanan profil uygulama özellikli interaktif terminal arayüzü.
-- **🎨 Modern GTK4 / Libadwaita Masaüstü Uygulaması (`ff-power-manager`):** Canlı ToF radarı, dinamik ilerleme çubuğu, tek tıkla doğrudan terminal paneli başlatma ve şık hero kart tasarımı.
-- **🚀 Masaüstü Menü Entegrasyonu:** TUI paneli Fedora uygulama menüsünden (`Super` tuşu > **FF Power Manager (Terminal Paneli)**) doğrudan açılabilir.
-- **⚙️ Tam Sistem Başlangıç Entegrasyonu (Autostart):** `systemd` servisleri ile bilgisayar açıldığında arka planda otomatik başlar.
-- **🔒 Güvenli ve Hızlı Yetkilendirme:** `setuid root (4755)` korumalı `ffctl` ve Polkit kuralları sayesinde şifre sormadan anında donanım yazmaçlarını günceller.
+**C & x86_64 Assembly** çekirdek motoru + **Python / GTK4 / GNOME Shell Wayland** entegrasyonuyla artık tüm Intel ve AMD dizüstü bilgisayarlarda (`Ubuntu`, `Debian`, `Fedora`) **otomatik donanım keşfi** ile çalışır.
 
 ---
 
-## 🚀 Kurulum ve Başlatma
+## v2.0.0 Yenilikleri
 
-Terminalde depoyu derleyip kurmak için tek bir komut yeterlidir:
+- **Pilde Gerçek ProMotion (`60 ↔ 120/144/165 Hz`):** Yalnızca pildeyken (prizde veya sinema oynatımı sırasında değil) `8` saniye hareketsizlikte ekranı `60 Hz`'e alır; touchpad veya tuşa dokunduğun milisaniyede `Mutter.IdleMonitor` ile **0 ms'de** tekrar en yüksek tazeleme hızına çıkar.
+- **Evrensel Donanım Keşfi:** CPU P/E/LP-E çekirdek topolojisi (`detect_cpu_topology()`), aktif ekran çözünürlüğü/Hz, `BAT0/BAT1` pil düğümü, Lenovo `conservation_mode` veya `charge_control_end_threshold`, Intel Xe / i915 / AMD Radeon GPU saat hızları ve SSD/Wi-Fi sıcaklıkları otomatik keşfedilir.
+- **Sinema & Ders/Odak Bağlam Motoru:** `stremio`, `mpv`, `vlc` algılandığında otomatik `120 Hz` + gerçek renk (Gece Işığı geçici kapalı) devreye girer. Menüdeki **Ders / Odak Modu** tek tıkla Rahatsız Etme + Gece Işığı + sessiz profili açar.
+- **1 Kerelik `%100` Şarj Bekçisi:** Günlük `%80` pil korumasını bozmadan yola çıkmadan önce tek tıkla `%100`'e şarj eder, `%99` olunca otomatik `%80` korumayı geri açıp bildirim gönderir.
+- **Termal Güvenlik Kalkanı (`>=90°C`):** `auto_boost.py` ağır yüklerde paket sıcaklığını izler, `90°C` üstünde PL1 limitini yumuşatarak throttling'i ve aşırı fan sesini önler.
+- **`s2idle` Çanta Koruması (`/lib/systemd/system-sleep/ff-sleep-guard`):** Uykuya geçerken USB/Thunderbolt wake sinyallerini kapatıp çantada ısınma ve şarj erimesini engeller.
+- **Günlük OLED & Enerji Tasarruf Karnesi:** Üst menüde ToF radar ve ProMotion ile kazanılan ekran koruma dakikasını ve tahmini `Wh` tasarrufunu gösterir.
+
+---
+
+## Kurulum (`.deb` veya Kaynaktan)
 
 ```bash
+# 1. Ubuntu / Debian .deb paketi ile:
+sudo apt install ./ff-power-manager_2.0.0_amd64.deb
+
+# 2. Veya kaynaktan kurulum (Ubuntu / Fedora):
+git clone https://github.com/lwrlock/ff-power-manager.git
 cd ff-power-manager
 sudo ./install.sh
 ```
 
-Kurulum tamamlandığında tüm sistem servisleri, yetkilendirme kuralları ve masaüstü kısayolları otomatik devreye girer.
+## Lisans
 
----
-
-## 🛠️ Kullanım Araçları
-
-### 1. Dinamik Terminal Arayüzü (`ff-tui` veya `ffctl tui`)
-Uygulama menüsünden *"FF Power Manager (Terminal Paneli)"* ikonuna tıklayabilir veya terminalde çalıştırabilirsiniz:
-```bash
-ff-tui
-```
-* `1` / `2` / `3` veya `Tab` : Sekmeler arasında geçiş (Genel Bakış / Batarya / Şebeke Gücü)
-* `P` : ToF Varlık Sensörünü Canlı Aç / Kapat
-* `T` : Intel Turbo Boost Aç / Kapat (Donanımda doğrulanır)
-* `A` / `B` / `C` : Aktif sekmedeki profili anında donanıma uygula
-* `Q` : Çıkış
-
-### 2. Yüksek Hızlı CLI Aracı (`ffctl`)
-```bash
-# Donanım, batarya, EPP ve ToF durumunu anında görüntüle (< 1 ms)
-ffctl status
-
-# Canlı ToF sensör telemetrisini ve mesafeyi terminale akıt
-ffctl sensor live
-
-# ToF sensör durumunu ve alınan paket sayısını gör
-ffctl sensor status
-
-# Güç profilini doğrudan donanıma uygula ve doğrula
-ffctl apply battery
-ffctl apply ac
-```
-
-### 3. Modern Grafik Arayüzü (GTK4 / Libadwaita)
-Uygulama menüsünden **FF Power Manager**'ı açabilir veya terminalden `ff-power-manager` komutunu verebilirsiniz.
-
----
-
-## 🤖 Yapay Zekâ Desteğiyle Geliştirildi (AI-Assisted)
-
-Bu proje; mimari tasarım, düşük seviyeli donanım optimizasyonları ve kullanıcı deneyimi süreçlerinde yapay zekâ (Google DeepMind Antigravity) ortaklığı ve mühendislik desteği ile geliştirilmiştir:
-
-- **Tersine Mühendislik & Protokol Ayrıştırma:** ST VL53L1 ToF sensörünün ham 35 baytlık USB HID paket yapısının analizi ve 16-bit milimetre mesafe formatının çözülmesi.
-- **x86_64 Assembly & C Çekirdeği:** Sıfır CPU tüketimiyle çalışan, mikro-saniye seviyesinde sysfs ve HID paket ayrıştırıcı rutinlerinin yazılması.
-- **Güç Optimizasyonu (~5W Boşta):** Intel Core Ultra Arrow Lake işlemci mimarisinin Package C-State (C8/C10) engellerinin tespiti, Intel Arc GPU GuC SLPC güç tasarrufu ve 2.8K OLED ekran yenileme hızı otomasyonunun kurgulanması.
-- **Arayüz Tasarımı:** GNOME ve Libadwaita standartlarına uygun modern GTK4 GUI ve btop esintili terminal TUI arayüzlerinin oluşturulması.
-
----
-
-## 👨‍💻 Geliştirici Hakkında
-
-Merhaba! Ben Furkan (**lwrlock**), 17 yaşında bir Bilgisayar Mühendisliği öğrencisiyim. **FF Power Manager** projesini, yeni nesil Intel Core Ultra, Intel Arc Pro ve Samsung 2.8K OLED donanımına sahip bir dizüstü bilgisayarda Linux (Fedora & GNOME) deneyimini en üst seviyeye çıkarmak; Apple Silicon / MacBook düzeyinde pil ömrü, sıfır video kasıntısı ve anında tepki süresi elde etmek amacıyla geliştirdim.
-
----
-
-## 📄 Lisans
-
-MIT Lisansı. Telif Hakkı (c) 2026 lwrlock. Ayrıntılar için [LICENSE](LICENSE) dosyasına bakabilirsiniz.
-
+MIT Lisansı — Telif Hakkı (c) 2026 Furkan (**lwrlock**). Ayrıntılar için [LICENSE](LICENSE).

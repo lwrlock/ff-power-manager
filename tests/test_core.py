@@ -191,13 +191,13 @@ class ConfigTests(unittest.TestCase):
 
             self.assertTrue(ctrl._is_media_active())
 
-            # Test 2: Inactive MPRIS and no inhibitors returns False
+            # Test 2: Inactive MPRIS, no inhibitors, and no RUNNING /proc/asound PCM returns False
             mock_list.unpack.return_value = ()
             mock_session.call_sync.side_effect = [
                 mock_list, # ListNames
                 mock.MagicMock(unpack=lambda: ([],)), # GetInhibitors
             ]
-            with mock.patch('subprocess.run', return_value=mock.MagicMock(stdout='SUSPENDED')):
+            with mock.patch('pathlib.Path.glob', return_value=[]):
                 self.assertFalse(ctrl._is_media_active())
 
     @mock.patch('fpm.core.glob.glob', return_value=[])
@@ -265,6 +265,57 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(calls[str(core.PLATFORM_PROFILE_PATH)], 'balanced')
             self.assertEqual(calls['/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw'], '35000000')
             self.assertEqual(calls['/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_1_power_limit_uw'], '55000000')
+
+    def test_detect_cpu_topology_universal(self):
+        # 3-tier hybrid (Intel Core Ultra Arrow Lake: 6 P, 8 E, 2 LP-E)
+        fake_freqs = {}
+        for i in range(6): fake_freqs[f'/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq'] = '5400000'
+        for i in range(6, 14): fake_freqs[f'/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq'] = '4500000'
+        for i in range(14, 16): fake_freqs[f'/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq'] = '2500000'
+
+        with mock.patch('fpm.core.glob.glob', side_effect=[list(fake_freqs.keys()), []]):
+            with mock.patch.object(core.pathlib.Path, 'read_text', lambda p, *a, **kw: fake_freqs[str(p)]):
+                p_c, e_c, lpe_c = core.detect_cpu_topology()
+                self.assertEqual(p_c, [0, 1, 2, 3, 4, 5])
+                self.assertEqual(e_c, [6, 7, 8, 9, 10, 11, 12, 13])
+                self.assertEqual(lpe_c, [14, 15])
+
+        # Symmetric AMD Ryzen / non-hybrid 8-core
+        sym_freqs = {f'/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq': '5100000' for i in range(8)}
+        with mock.patch('fpm.core.glob.glob', side_effect=[list(sym_freqs.keys()), []]):
+            with mock.patch.object(core.pathlib.Path, 'read_text', lambda p, *a, **kw: sym_freqs[str(p)]):
+                p_c, e_c, lpe_c = core.detect_cpu_topology()
+                self.assertEqual(p_c, list(range(8)))
+                self.assertEqual(e_c, [])
+                self.assertEqual(lpe_c, [])
+
+    def test_apply_cool_quiet_and_max_battery_modes(self):
+        with mock.patch('fpm.core.set_profile') as mock_prof, \
+             mock.patch('fpm.core.set_epp') as mock_epp, \
+             mock.patch('fpm.core.set_turbo') as mock_turbo, \
+             mock.patch('fpm.core.set_hwp_dynamic_boost'), \
+             mock.patch('fpm.core.set_cpu_freq_floor'), \
+             mock.patch('fpm.core.set_wifi_ps'), \
+             mock.patch('fpm.core.set_nvme'), \
+             mock.patch('fpm.core.set_pci_runtime_pm'), \
+             mock.patch('fpm.core.set_gpu'), \
+             mock.patch('fpm.core.set_pcie_aspm') as mock_aspm, \
+             mock.patch('fpm.core.set_usb'), \
+             mock.patch('fpm.core.set_audio'), \
+             mock.patch('fpm.core.apply_kernel_tunings'), \
+             mock.patch('fpm.core.set_rapl_limits'), \
+             mock.patch('fpm.core.optimize_sd_card'), \
+             mock.patch('fpm.core.optimize_desktop_responsiveness'), \
+             mock.patch('fpm.core.pin_interactive_irqs'):
+            core.apply('cool_quiet', core.DEFAULT_CONFIG)
+            mock_prof.assert_called_with('balanced')
+            mock_epp.assert_called_with('balance_power')
+
+            core.apply('max_battery', core.DEFAULT_CONFIG)
+            mock_prof.assert_called_with('power-saver')
+            mock_epp.assert_called_with('power')
+            mock_turbo.assert_called_with(False)
+            mock_aspm.assert_called_with('powersupersave')
 
 
 if __name__ == '__main__':
