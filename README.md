@@ -134,6 +134,17 @@ FF Power Manager is built and maintained by **Furkan (`@lwrlock`)** with **AI-as
 
 Found a quirk on a ThinkPad, IdeaPad, Framework, ASUS, or AMD laptop? Open an [Issue](https://github.com/lwrlock/ff-power-manager/issues) with the output of `ffctl doctor --json` and `ffctl blame --json`. Pull requests, benchmarks, and GitHub Stars are always welcome!
 
+## Companion Tools (FF Linux Systems Suite)
+
+Explore the full Linux kernel telemetry, AI accelerator, storage, and hardware security ecosystem:
+
+- [**eBPF Latency Guard**](https://github.com/lwrlock/ebpf-latency-guard) — eBPF CO-RE scheduler tracepoints, PSI & IRQ micro-stutter detective
+- [**VRAM Atlas**](https://github.com/lwrlock/vram-atlas) — Intel Xe iGPU, Intel NPU (`intel_vpu`), UMA RAM & local LLM `Tokens/Watt` profiler
+- [**Waylens Privacy**](https://github.com/lwrlock/waylens-privacy) — Zero-Trust `ST VL53L1` ToF radar perimeter, Anti-BadUSB & SSH vault
+- [**MemPulse**](https://github.com/lwrlock/mempulse) — MGLRU `lru_gen`, Memory PSI & `zstd` ZRAM compression analyzer
+- [**NetPulse BPF**](https://github.com/lwrlock/netpulse-bpf) — eBPF `sock_ops` RTT, TCP BBR/`fq` congestion & socket profiler
+- [**NVMe Sentinel**](https://github.com/lwrlock/nvme-sentinel) — PCIe Gen4/5 link, hwmon thermal & APST PS4 deep-sleep monitor
+
 ## License
 
 MIT License. Copyright (c) 2026 Furkan (**lwrlock**). See [LICENSE](LICENSE).
