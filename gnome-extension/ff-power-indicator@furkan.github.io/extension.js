@@ -455,6 +455,9 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     _buildMenu() {
+        if (this.menu && this.menu.box) {
+            this.menu.box.add_style_class_name('ff-power-menu');
+        }
         let headerBoxItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         let infoBox = new St.BoxLayout({vertical: true, x_expand: true, style: 'spacing: 2px;'});
 

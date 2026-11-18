@@ -32,23 +32,27 @@
 
 /* Ubuntu Popup Menus & Notifications: Frosted OLED Glass */
 .popup-menu-boxpointer .popup-menu-content {
-    background-color: rgba(18, 20, 28, 0.86) !important;
+    background-color: rgba(18, 20, 28, 0.94) !important;
     border: 1px solid rgba(255, 255, 255, 0.14) !important;
-    border-radius: 14px !important;
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.65) !important;
-    padding: 5px 4px !important;
+    border-radius: 16px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65) !important;
 }
 
 .popup-menu-item {
+    border-radius: 10px !important;
+    transition-duration: 120ms !important;
+}
+
+/* Compact menu spacing scoped exclusively to FF Power Indicator */
+.ff-power-menu .popup-menu-item {
     border-radius: 8px !important;
     padding: 3px 10px !important;
     spacing: 6px !important;
     min-height: 20px !important;
     font-size: 11.5px !important;
-    transition-duration: 120ms !important;
 }
 
-.popup-separator-menu-item {
+.ff-power-menu .popup-separator-menu-item {
     margin: 2px 4px !important;
     padding: 0 !important;
     height: 1px !important;
