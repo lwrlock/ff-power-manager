@@ -397,25 +397,17 @@ class ConfigTests(unittest.TestCase):
         from fpm import cosmic_ui
         surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 640, 400)
         cr = cairo.Context(surf)
-        # Exercise drawing primitives directly on a real Cairo surface (no display server needed)
         stars = cosmic_ui.CosmicBackdrop._init_stars(30)
         self.assertEqual(len(stars), 30)
-        fake_self = mock.MagicMock()
-        fake_self._phase = 1.5
-        fake_self._stars = stars
-        fake_self._meteors = cosmic_ui.CosmicBackdrop._init_meteors(2)
-        fake_self._meteors[0]['active'] = True
-        fake_self._meteors[0]['progress'] = 0.5
-        fake_self._planet_cache = None
-        fake_self._planet_cache_r = 0.0
-        fake_self._exo_cache = None
-        fake_self._exo_cache_r = 0.0
-        fake_self._ensure_planet_cache = lambda r: cosmic_ui.CosmicBackdrop._ensure_planet_cache(fake_self, r)
-        cosmic_ui.CosmicBackdrop._draw_nebula(fake_self, cr, 640.0, 400.0, 1.5)
-        cosmic_ui.CosmicBackdrop._draw_stars(fake_self, cr, 640.0, 400.0, 1.5)
-        cosmic_ui.CosmicBackdrop._draw_shooting_stars(fake_self, cr, 640.0, 400.0)
-        cosmic_ui.CosmicBackdrop._draw_ringed_planet(fake_self, cr, 500.0, 110.0, 48.0, 1.5)
-        cosmic_ui.CosmicBackdrop._draw_exoplanet(fake_self, cr, 90.0, 310.0, 26.0, 1.5)
+        meteors = cosmic_ui.CosmicBackdrop._init_meteors(2)
+        meteors[0]['active'] = True
+        meteors[0]['progress'] = 0.5
+        cosmic_ui.CosmicBackdrop._draw_nebula(cr, 640.0, 400.0, 1.5)
+        cosmic_ui.CosmicBackdrop._draw_shooting_stars_on(meteors, cr, 640.0, 400.0)
+        cosmic_ui.CosmicBackdrop._draw_ringed_planet(cr, 500.0, 110.0, 48.0, 1.5)
+        cosmic_ui.CosmicBackdrop._draw_exoplanet(cr, 90.0, 310.0, 26.0, 1.5)
+        tex = cosmic_ui._surface_to_texture(cosmic_ui.CosmicBackdrop._bake_moon_surface(10.0))
+        self.assertGreater(tex.get_width(), 0)
         chart_mock = mock.MagicMock()
         chart_mock._samples = [{'watts': 5.2, 'temp_c': 44}, {'watts': 11.4, 'temp_c': 53}, {'watts': 6.1, 'temp_c': 46}]
         cosmic_ui.TelemetrySparklineChart._on_draw(chart_mock, None, cr, 500, 150)
