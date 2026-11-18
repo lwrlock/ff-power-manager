@@ -197,19 +197,25 @@ class PresenceController:
                 mode = 'max_battery'
         except Exception:
             pass
+        self._poll_tick = getattr(self, '_poll_tick', 0) + 1
+        scan_heavy = (self._poll_tick % 3 == 1)
+
         cinema_apps = {'stremio', 'mpv', 'vlc', 'celluloid', 'kodi', 'clapper'}
-        cinema_active = False
-        try:
-            for cp in pathlib.Path('/proc').glob('[0-9]*/comm'):
-                try:
-                    cname = cp.read_text(encoding='utf-8', errors='ignore').strip().lower()
-                    if cname in cinema_apps:
-                        cinema_active = True
-                        break
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        if scan_heavy or getattr(self, '_last_cinema_active', None) is None:
+            cinema_active = False
+            try:
+                for cp in pathlib.Path('/proc').glob('[0-9]*/comm'):
+                    try:
+                        cname = cp.read_text(encoding='utf-8', errors='ignore').strip().lower()
+                        if cname in cinema_apps:
+                            cinema_active = True
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        else:
+            cinema_active = bool(self._last_cinema_active)
 
         if cinema_active != getattr(self, '_last_cinema_active', None):
             self._last_cinema_active = cinema_active
@@ -242,7 +248,10 @@ class PresenceController:
             self._update_refresh_rate(mode)
 
         # Smart Media Tracking: Broadcast media state for low-power video playback
-        media_active = self._is_media_active()
+        if scan_heavy or getattr(self, '_last_media_active', None) is None:
+            media_active = self._is_media_active()
+        else:
+            media_active = bool(self._last_media_active)
         if media_active != getattr(self, '_last_media_active', None):
             self._last_media_active = media_active
             try:
@@ -262,9 +271,9 @@ class PresenceController:
                 self._set_dimming(False)
                 self.is_dimmed = False
         else:
-            idletime_ms = self._get_idletime_ms()
             dim_sec = int(self.cfg.get('oled_dim_inactive_sec', 0))
             if dim_sec > 0:
+                idletime_ms = self._get_idletime_ms()
                 dim_ms = dim_sec * 1000
                 disp_mode = self._get_display_power_save()
                 if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:

@@ -90,36 +90,104 @@ function updatePresenceConf(key, val) {
     }
 }
 
-function getActiveMediaInfo() {
+function discoverUcsiDir() {
     try {
-        const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
-        const res = bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'ListNames', null, null, Gio.DBusCallFlags.NONE, 200, null);
-        const names = res.get_child_value(0).deep_unpack().filter(n => n.startsWith('org.mpris.MediaPlayer2.'));
-        let pausedCandidate = null;
-        for (const name of names) {
-            try {
-                const statusRes = bus.call_sync(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get', new GLib.Variant('(ss)', ['org.mpris.MediaPlayer2.Player', 'PlaybackStatus']), null, Gio.DBusCallFlags.NONE, 200, null);
-                const status = statusRes.get_child_value(0).get_variant().deep_unpack();
-                const metaRes = bus.call_sync(name, '/org/mpris/MediaPlayer2', 'org.freedesktop.DBus.Properties', 'Get', new GLib.Variant('(ss)', ['org.mpris.MediaPlayer2.Player', 'Metadata']), null, Gio.DBusCallFlags.NONE, 200, null);
-                const dict = metaRes.get_child_value(0).get_variant();
-                const titleV = dict.lookup_value('xesam:title', null);
-                const artistV = dict.lookup_value('xesam:artist', null);
-                let title = titleV ? String(titleV.deep_unpack()) : '';
-                let artist = '';
-                if (artistV) {
-                    const aVal = artistV.deep_unpack();
-                    artist = Array.isArray(aVal) ? aVal.join(', ') : String(aVal || '');
-                }
-                if (title) {
-                    const info = { bus, name, status, title: title.trim(), artist: artist.trim() };
-                    if (status === 'Playing') return info;
-                    if (!pausedCandidate) pausedCandidate = info;
-                }
-            } catch (_) {}
+        const dir = Gio.File.new_for_path('/sys/class/power_supply');
+        const iter = dir.enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
+        let info;
+        while ((info = iter.next_file(null)) !== null) {
+            const nm = info.get_name();
+            if (nm.includes('ucsi')) {
+                return `/sys/class/power_supply/${nm}`;
+            }
         }
-        return pausedCandidate;
     } catch (_) {}
     return null;
+}
+
+function queryMprisPlayerAsync(bus, name, callback) {
+    bus.call(
+        name,
+        '/org/mpris/MediaPlayer2',
+        'org.freedesktop.DBus.Properties',
+        'GetAll',
+        new GLib.Variant('(s)', ['org.mpris.MediaPlayer2.Player']),
+        new GLib.VariantType('(a{sv})'),
+        Gio.DBusCallFlags.NONE,
+        300,
+        null,
+        (_conn, res) => {
+            try {
+                const reply = bus.call_finish(res);
+                const props = reply.get_child_value(0);
+                const statusV = props.lookup_value('PlaybackStatus', null);
+                const metaV = props.lookup_value('Metadata', null);
+                const status = statusV ? statusV.deep_unpack() : '';
+                let title = '';
+                let artist = '';
+                if (metaV) {
+                    const titleV = metaV.lookup_value('xesam:title', null);
+                    const artistV = metaV.lookup_value('xesam:artist', null);
+                    title = titleV ? String(titleV.deep_unpack()).trim() : '';
+                    if (artistV) {
+                        const aVal = artistV.deep_unpack();
+                        artist = (Array.isArray(aVal) ? aVal.join(', ') : String(aVal || '')).trim();
+                    }
+                }
+                if (title) {
+                    callback({ name, status, title, artist });
+                    return;
+                }
+            } catch (_) {}
+            callback(null);
+        }
+    );
+}
+
+function refreshMediaInfoAsync(callback) {
+    try {
+        const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
+        bus.call(
+            'org.freedesktop.DBus',
+            '/org/freedesktop/DBus',
+            'org.freedesktop.DBus',
+            'ListNames',
+            null,
+            new GLib.VariantType('(as)'),
+            Gio.DBusCallFlags.NONE,
+            300,
+            null,
+            (_conn, res) => {
+                try {
+                    const out = bus.call_finish(res);
+                    const names = out.get_child_value(0).deep_unpack().filter(n => n.startsWith('org.mpris.MediaPlayer2.'));
+                    if (names.length === 0) {
+                        callback(null);
+                        return;
+                    }
+                    let pending = names.length;
+                    let best = null;
+                    for (const name of names) {
+                        queryMprisPlayerAsync(bus, name, info => {
+                            if (info) {
+                                if (!best || info.status === 'Playing') {
+                                    best = info;
+                                }
+                            }
+                            pending--;
+                            if (pending === 0) {
+                                callback(best);
+                            }
+                        });
+                    }
+                } catch (_) {
+                    callback(null);
+                }
+            }
+        );
+    } catch (_) {
+        callback(null);
+    }
 }
 
 function discoverHwmonByName(targets) {
@@ -139,7 +207,7 @@ function discoverHwmonByName(targets) {
     return found;
 }
 
-function getCpuTemp(hwmonMap) {
+function discoverCpuTempPath(hwmonMap) {
     const candidates = [
         hwmonMap.coretemp,
         hwmonMap.k10temp,
@@ -154,10 +222,22 @@ function getCpuTemp(hwmonMap) {
             let txt = readFile(p);
             if (txt) {
                 let deg = parseInt(txt, 10);
-                if (deg > 10000 && deg < 110000) return `${Math.round(deg / 1000)}°C`;
+                if (deg > 10000 && deg < 110000) return p;
             }
         } catch (_) {}
     }
+    return null;
+}
+
+function getCpuTemp(tempPath) {
+    if (!tempPath) return '--°C';
+    try {
+        let txt = readFile(tempPath);
+        if (txt) {
+            let deg = parseInt(txt, 10);
+            if (deg > 10000 && deg < 110000) return `${Math.round(deg / 1000)}°C`;
+        }
+    } catch (_) {}
     return '--°C';
 }
 
@@ -205,7 +285,7 @@ function getGpuStr(gpuInfo) {
     return 'Auto';
 }
 
-function getChargerAndThermals(hwmonMap, batDir, onAc) {
+function getChargerAndThermals(hwmonMap, batDir, ucsiDir, onAc) {
     const nvmeRaw = hwmonMap.nvme ? parseInt(readFile(hwmonMap.nvme) || '0', 10) : 0;
     const wifiRaw = hwmonMap.iwlwifi_1 ? parseInt(readFile(hwmonMap.iwlwifi_1) || '0', 10) : 0;
     const nvmeStr = nvmeRaw > 1000 ? `${Math.round(nvmeRaw / 1000)}°C` : '--';
@@ -215,22 +295,11 @@ function getChargerAndThermals(hwmonMap, batDir, onAc) {
     const voltStr = voltUv > 1000000 ? `${(voltUv / 1e6).toFixed(1)}V` : '';
 
     let portStr = onAc ? 'AC' : 'Pil';
-    try {
-        const dir = Gio.File.new_for_path('/sys/class/power_supply');
-        const iter = dir.enumerate_children('standard::name', Gio.FileQueryInfoFlags.NONE, null);
-        let info;
-        while ((info = iter.next_file(null)) !== null) {
-            const nm = info.get_name();
-            if (!nm.includes('ucsi')) continue;
-            const base = `/sys/class/power_supply/${nm}`;
-            if (readFile(`${base}/online`) === '1') {
-                const utype = readFile(`${base}/usb_type`) || 'PD';
-                const pdTag = utype.includes('[PD') ? 'PD' : 'USB-C';
-                portStr = `USB-C ${pdTag}`;
-                break;
-            }
-        }
-    } catch (_) {}
+    if (ucsiDir && readFile(`${ucsiDir}/online`) === '1') {
+        const utype = readFile(`${ucsiDir}/usb_type`) || 'PD';
+        const pdTag = utype.includes('[PD') ? 'PD' : 'USB-C';
+        portStr = `USB-C ${pdTag}`;
+    }
     return `SSD: ${nvmeStr} • Wi-Fi: ${wifiStr} | ${portStr}${voltStr ? ' (' + voltStr + ')' : ''}`;
 }
 
@@ -321,12 +390,23 @@ class FFPowerIndicator extends PanelMenu.Button {
         this._notifSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.notifications' });
         this._colorSettings = new Gio.Settings({ schema_id: 'org.gnome.settings-daemon.plugins.color' });
         this._hwmonMap = discoverHwmonByName(['nvme', 'iwlwifi_1', 'coretemp', 'k10temp', 'zenpower']);
+        this._cpuTempPath = discoverCpuTempPath(this._hwmonMap);
+        this._ucsiDir = discoverUcsiDir();
         this._batDir = discoverBatteryDir();
         this._consInfo = discoverConservationNode();
         this._gpuInfo = discoverGpuNodes();
         this._laptopTitle = discoverLaptopTitle();
+        this._cachedMedia = null;
+        this._destroyed = false;
+        this._focusDebounceId = 0;
 
         this._buildMenu();
+        this._menuOpenSig = this.menu.connect('open-state-changed', (_menu, isOpen) => {
+            if (isOpen) {
+                this._updateTelemetry();
+                this._updateMenuTelemetry();
+            }
+        });
         this._updateTelemetry();
         this._onFocusChanged();
         try {
@@ -335,10 +415,10 @@ class FFPowerIndicator extends PanelMenu.Button {
             this._focusSig = 0;
         }
 
-        this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+        this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
             this._updateTelemetry();
             this._oledTick++;
-            if (this._oledTick % 90 === 0) {
+            if (this._oledTick % 60 === 0) {
                 this._applyOledPixelShift();
             }
             return GLib.SOURCE_CONTINUE;
@@ -346,13 +426,21 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     _onFocusChanged() {
-        try {
-            const win = global.display.focus_window;
-            const pid = win ? win.get_pid() : 0;
-            const wmClass = win ? (win.get_wm_class() || '') : '';
-            const payload = JSON.stringify({ pid, wm_class: wmClass, ts: Math.floor(Date.now() / 1000) }) + '\n';
-            GLib.file_set_contents(FOCUSED_WIN_FILE, payload);
-        } catch (_) {}
+        if (this._focusDebounceId) {
+            GLib.source_remove(this._focusDebounceId);
+            this._focusDebounceId = 0;
+        }
+        this._focusDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+            this._focusDebounceId = 0;
+            try {
+                const win = global.display.focus_window;
+                const pid = win ? win.get_pid() : 0;
+                const wmClass = win ? (win.get_wm_class() || '') : '';
+                const payload = JSON.stringify({ pid, wm_class: wmClass, ts: Math.floor(Date.now() / 1000) }) + '\n';
+                GLib.file_set_contents(FOCUSED_WIN_FILE, payload);
+            } catch (_) {}
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _applyOledPixelShift() {
@@ -520,18 +608,28 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     _sendMediaCmd(method) {
+        if (!this._cachedMedia || !this._cachedMedia.name) return;
         try {
-            const media = getActiveMediaInfo();
-            if (media && media.name) {
-                const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
-                bus.call_sync(
-                    media.name,
-                    '/org/mpris/MediaPlayer2',
-                    'org.freedesktop.DBus.Properties',
-                    method,
-                    null, null, Gio.DBusCallFlags.NONE, 500, null
-                );
-            }
+            const bus = Gio.bus_get_sync(Gio.BusType.SESSION, null);
+            bus.call(
+                this._cachedMedia.name,
+                '/org/mpris/MediaPlayer2',
+                'org.mpris.MediaPlayer2.Player',
+                method,
+                null,
+                null,
+                Gio.DBusCallFlags.NONE,
+                300,
+                null,
+                () => {
+                    refreshMediaInfoAsync(media => {
+                        if (!this._destroyed) {
+                            this._cachedMedia = media;
+                            this._renderTopLabel();
+                        }
+                    });
+                }
+            );
         } catch (_) {}
     }
 
@@ -543,22 +641,23 @@ class FFPowerIndicator extends PanelMenu.Button {
         }
     }
 
-    _updateTelemetry() {
-        let capStr = readFile(`${this._batDir}/capacity`) || '100';
+    _renderTopLabel(capStr, onAc, pwrStr, temp) {
+        if (capStr !== undefined) {
+            this._lastCapStr = capStr;
+            this._lastOnAc = onAc;
+            this._lastPwrStr = pwrStr;
+            this._lastTemp = temp;
+        }
+        const c = this._lastCapStr || '100';
+        const ac = this._lastOnAc || false;
+        const pwr = this._lastPwrStr || '-- W';
+        const t = this._lastTemp || '--°C';
+        const media = this._cachedMedia;
 
-        let acad = readFile('/sys/class/power_supply/ACAD/online') ||
-                   readFile('/sys/class/power_supply/AC/online') ||
-                   readFile('/sys/class/power_supply/ADP1/online');
-        let onAc = (acad === '1');
-        let watts = getLiveWatts(this._batDir);
-
-        const media = getActiveMediaInfo();
-        const temp = getCpuTemp(this._hwmonMap || {});
-        let pwrStr = (watts !== null && watts > 0.2) ? `${watts.toFixed(1)}W` : '-- W';
         if (media && media.title) {
             let shortTitle = media.title.length > 20 ? media.title.substring(0, 18) + '…' : media.title;
             let statusIcon = media.status === 'Playing' ? '▶ ' : '⏸ ';
-            this._label.text = `${statusIcon}${shortTitle} | ${pwrStr} • %${capStr}${onAc ? ' AC' : ''} • ${temp}`;
+            this._label.text = `${statusIcon}${shortTitle} | ${pwr} • %${c}${ac ? ' AC' : ''} • ${t}`;
             if (this._mediaLabel) {
                 let mTitle = media.title.length > 26 ? media.title.substring(0, 24) + '…' : media.title;
                 this._mediaLabel.text = `${statusIcon}${mTitle}`;
@@ -567,8 +666,47 @@ class FFPowerIndicator extends PanelMenu.Button {
             if (this._mediaLabel) {
                 this._mediaLabel.text = 'Medya: Boşta';
             }
-            this._label.text = `${pwrStr} • %${capStr}${onAc ? ' AC' : ''} • ${temp}`;
+            this._label.text = `${pwr} • %${c}${ac ? ' AC' : ''} • ${t}`;
         }
+    }
+
+    _updateTelemetry() {
+        let capStr = readFile(`${this._batDir}/capacity`) || '100';
+        let acad = readFile('/sys/class/power_supply/ACAD/online') ||
+                   readFile('/sys/class/power_supply/AC/online') ||
+                   readFile('/sys/class/power_supply/ADP1/online');
+        let onAc = (acad === '1');
+        let watts = getLiveWatts(this._batDir);
+        const temp = getCpuTemp(this._cpuTempPath);
+        let pwrStr = (watts !== null && watts > 0.2) ? `${watts.toFixed(1)}W` : '-- W';
+
+        this._renderTopLabel(capStr, onAc, pwrStr, temp);
+
+        refreshMediaInfoAsync(media => {
+            if (this._destroyed) return;
+            this._cachedMedia = media;
+            this._renderTopLabel();
+        });
+
+        if (this.menu.isOpen) {
+            this._updateMenuTelemetry(onAc, pwrStr, temp);
+        }
+    }
+
+    _updateMenuTelemetry(onAcArg, pwrArg, tempArg) {
+        let onAc = onAcArg;
+        if (onAc === undefined) {
+            let acad = readFile('/sys/class/power_supply/ACAD/online') ||
+                       readFile('/sys/class/power_supply/AC/online') ||
+                       readFile('/sys/class/power_supply/ADP1/online');
+            onAc = (acad === '1');
+        }
+        let pwrStr = pwrArg;
+        if (pwrStr === undefined) {
+            let watts = getLiveWatts(this._batDir);
+            pwrStr = (watts !== null && watts > 0.2) ? `${watts.toFixed(1)}W` : '-- W';
+        }
+        let temp = tempArg !== undefined ? tempArg : getCpuTemp(this._cpuTempPath);
 
         if (this._cmSwitch && this._consInfo && this._consInfo.path) {
             let cm = readFile(this._consInfo.path);
@@ -598,7 +736,7 @@ class FFPowerIndicator extends PanelMenu.Button {
         if (this._gpuBatLabel) {
             const gpuStr = getGpuStr(this._gpuInfo);
             const bat = getBatteryDetails(this._batDir, onAc);
-            const therm = getChargerAndThermals(this._hwmonMap || {}, this._batDir, onAc);
+            const therm = getChargerAndThermals(this._hwmonMap || {}, this._batDir, this._ucsiDir, onAc);
             this._gpuBatLabel.text = `GPU: ${gpuStr} • ${bat.etaStr} (%${bat.healthPct}) | ${therm}`;
         }
 
@@ -643,6 +781,17 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     destroy() {
+        this._destroyed = true;
+        if (this._focusDebounceId) {
+            GLib.source_remove(this._focusDebounceId);
+            this._focusDebounceId = 0;
+        }
+        if (this._menuOpenSig && this.menu) {
+            try {
+                this.menu.disconnect(this._menuOpenSig);
+            } catch (_) {}
+            this._menuOpenSig = 0;
+        }
         if (this._focusSig) {
             try {
                 global.display.disconnect(this._focusSig);
