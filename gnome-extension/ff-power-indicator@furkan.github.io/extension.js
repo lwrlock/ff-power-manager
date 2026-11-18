@@ -367,73 +367,80 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     _buildMenu() {
-        let headerItem = new PopupMenu.PopupMenuItem('FF Power Manager', {reactive: false});
-        headerItem.label.style = 'font-weight: bold; font-size: 13px; color: #38bdf8;';
-        this.menu.addMenuItem(headerItem);
+        let headerBoxItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        let infoBox = new St.BoxLayout({vertical: true, x_expand: true, style: 'spacing: 2px;'});
 
-        this._subHeader = new PopupMenu.PopupMenuItem(this._laptopTitle, {reactive: false});
-        this._subHeader.label.style = 'font-size: 11px; color: #94a3b8;';
-        this.menu.addMenuItem(this._subHeader);
+        this._hdrLabel = new St.Label({
+            text: 'FF Power Manager',
+            style: 'font-weight: bold; font-size: 12px; color: #38bdf8;',
+        });
+        this._subHeaderLabel = new St.Label({
+            text: this._laptopTitle,
+            style: 'font-size: 10.5px; color: #cbd5e1;',
+        });
+        this._gpuBatLabel = new St.Label({
+            text: 'GPU & Batarya yükleniyor...',
+            style: 'font-size: 10.5px; color: #94a3b8;',
+        });
+        this._coreSavLabel = new St.Label({
+            text: 'CPU & Tasarruf izleniyor...',
+            style: 'font-size: 10.5px; color: #34d399;',
+        });
 
-        this._gpuBatItem = new PopupMenu.PopupMenuItem('GPU & Batarya yükleniyor...', {reactive: false});
-        this._gpuBatItem.label.style = 'font-size: 11px; color: #cbd5e1;';
-        this.menu.addMenuItem(this._gpuBatItem);
-
-        this._thermalsItem = new PopupMenu.PopupMenuItem('Termal & Şarj yükleniyor...', {reactive: false});
-        this._thermalsItem.label.style = 'font-size: 11px; color: #94a3b8;';
-        this.menu.addMenuItem(this._thermalsItem);
-
-        this._savingsItem = new PopupMenu.PopupMenuItem('Tasarruf: İzleniyor...', {reactive: false});
-        this._savingsItem.label.style = 'font-size: 10.5px; color: #34d399;';
-        this.menu.addMenuItem(this._savingsItem);
+        infoBox.add_child(this._hdrLabel);
+        infoBox.add_child(this._subHeaderLabel);
+        infoBox.add_child(this._gpuBatLabel);
+        infoBox.add_child(this._coreSavLabel);
+        headerBoxItem.add_child(infoBox);
+        this.menu.addMenuItem(headerBoxItem);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        this._mediaSection = new PopupMenu.PopupMenuSection();
-        this._mediaItem = new PopupMenu.PopupMenuItem('Medya: Oynatıcı Bekleniyor...', {reactive: false});
-        this._mediaItem.label.style = 'font-size: 11.5px; font-weight: 500; color: #f8fafc;';
-        this._mediaSection.addMenuItem(this._mediaItem);
-
-        let mediaControlsBox = new PopupMenu.PopupBaseMenuItem({reactive: true});
-        let cBox = new St.BoxLayout({x_expand: true, style: 'spacing: 10px;'});
-        let btnPrev = new St.Button({label: 'Önceki', style_class: 'mediamac-btn'});
+        let mediaRowItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        let mRow = new St.BoxLayout({x_expand: true, style: 'spacing: 6px;'});
+        this._mediaLabel = new St.Label({
+            text: 'Medya: Boşta',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            style: 'font-size: 11px; color: #f8fafc;',
+        });
+        let btnPrev = new St.Button({label: '⏮', style_class: 'mediamac-btn', reactive: true});
         btnPrev.connect('clicked', () => this._sendMediaCmd('Previous'));
-        let btnPlay = new St.Button({label: 'Oynat / Duraklat', style_class: 'mediamac-btn'});
+        let btnPlay = new St.Button({label: '⏯', style_class: 'mediamac-btn', reactive: true});
         btnPlay.connect('clicked', () => this._sendMediaCmd('PlayPause'));
-        let btnNext = new St.Button({label: 'Sonraki', style_class: 'mediamac-btn'});
+        let btnNext = new St.Button({label: '⏭', style_class: 'mediamac-btn', reactive: true});
         btnNext.connect('clicked', () => this._sendMediaCmd('Next'));
-        cBox.add_child(btnPrev);
-        cBox.add_child(btnPlay);
-        cBox.add_child(btnNext);
-        mediaControlsBox.add_child(cBox);
-        this._mediaSection.addMenuItem(mediaControlsBox);
+        mRow.add_child(this._mediaLabel);
+        mRow.add_child(btnPrev);
+        mRow.add_child(btnPlay);
+        mRow.add_child(btnNext);
+        mediaRowItem.add_child(mRow);
+        this.menu.addMenuItem(mediaRowItem);
 
-        this.menu.addMenuItem(this._mediaSection);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        let profilesSection = new PopupMenu.PopupMenuSection();
+        let profilesItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        let pGrid = new St.BoxLayout({vertical: true, x_expand: true, style: 'spacing: 4px;'});
+        let pRow1 = new St.BoxLayout({x_expand: true, style: 'spacing: 6px;'});
+        let pRow2 = new St.BoxLayout({x_expand: true, style: 'spacing: 6px;'});
 
-        let pRec = new PopupMenu.PopupMenuItem('Dengeli Profil (Önerilen)');
-        pRec.connect('activate', () => this._runCmd('/usr/local/bin/ffctl apply'));
-        profilesSection.addMenuItem(pRec);
+        const addProfileBtn = (row, label, cmd) => {
+            let btn = new St.Button({label, style_class: 'ff-grid-btn', x_expand: true, reactive: true});
+            btn.connect('clicked', () => {
+                this._runCmd(cmd);
+                this.menu.close();
+            });
+            row.add_child(btn);
+        };
+        addProfileBtn(pRow1, 'Dengeli (Önerilen)', '/usr/local/bin/ffctl apply');
+        addProfileBtn(pRow1, 'Yüksek Perf.', '/usr/local/bin/ffctl apply extreme_performance');
+        addProfileBtn(pRow2, 'Maks. Batarya', '/usr/local/bin/ffctl apply max_battery');
+        addProfileBtn(pRow2, 'Sessiz & Serin', '/usr/local/bin/ffctl apply cool_quiet');
 
-        let pExt = new PopupMenu.PopupMenuItem('Yüksek Performans');
-        pExt.connect('activate', () => this._runCmd('/usr/local/bin/ffctl apply extreme_performance'));
-        profilesSection.addMenuItem(pExt);
-
-        let pBat = new PopupMenu.PopupMenuItem('Maksimum Batarya Tasarrufu');
-        pBat.connect('activate', () => this._runCmd('/usr/local/bin/ffctl apply max_battery'));
-        profilesSection.addMenuItem(pBat);
-
-        let pQuiet = new PopupMenu.PopupMenuItem('Sessiz & Serin Mod');
-        pQuiet.connect('activate', () => this._runCmd('/usr/local/bin/ffctl apply cool_quiet'));
-        profilesSection.addMenuItem(pQuiet);
-
-        this._coreItem = new PopupMenu.PopupMenuItem('CPU & Yenileme Hızı yükleniyor...', {reactive: false});
-        this._coreItem.label.style = 'font-size: 11px; color: #38bdf8;';
-        profilesSection.addMenuItem(this._coreItem);
-
-        this.menu.addMenuItem(profilesSection);
+        pGrid.add_child(pRow1);
+        pGrid.add_child(pRow2);
+        profilesItem.add_child(pGrid);
+        this.menu.addMenuItem(profilesItem);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         if (this._consInfo && this._consInfo.path) {
@@ -494,15 +501,22 @@ class FFPowerIndicator extends PanelMenu.Button {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        let guiItem = new PopupMenu.PopupMenuItem('Kontrol Merkezi (GUI)');
-        guiItem.connect('activate', () => this._runCmd('/usr/local/bin/ff-power-manager'));
-        this.menu.addMenuItem(guiItem);
-
-        let tuiItem = new PopupMenu.PopupMenuItem('Terminal Paneli (ff-tui)');
-        tuiItem.connect('activate', () => {
-            this._runCmd('gnome-terminal -- /usr/local/bin/ff-tui');
+        let launchItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        let launchRow = new St.BoxLayout({x_expand: true, style: 'spacing: 6px;'});
+        let btnGui = new St.Button({label: 'Kontrol Merkezi (GUI)', style_class: 'ff-grid-btn', x_expand: true, reactive: true});
+        btnGui.connect('clicked', () => {
+            this._runCmd('/usr/local/bin/ff-power-manager');
+            this.menu.close();
         });
-        this.menu.addMenuItem(tuiItem);
+        let btnTui = new St.Button({label: 'Terminal (ff-tui)', style_class: 'ff-grid-btn', x_expand: true, reactive: true});
+        btnTui.connect('clicked', () => {
+            this._runCmd('gnome-terminal -- /usr/local/bin/ff-tui');
+            this.menu.close();
+        });
+        launchRow.add_child(btnGui);
+        launchRow.add_child(btnTui);
+        launchItem.add_child(launchRow);
+        this.menu.addMenuItem(launchItem);
     }
 
     _sendMediaCmd(method) {
@@ -545,12 +559,13 @@ class FFPowerIndicator extends PanelMenu.Button {
             let shortTitle = media.title.length > 20 ? media.title.substring(0, 18) + '…' : media.title;
             let statusIcon = media.status === 'Playing' ? '▶ ' : '⏸ ';
             this._label.text = `${statusIcon}${shortTitle} | ${pwrStr} • %${capStr}${onAc ? ' AC' : ''} • ${temp}`;
-            if (this._mediaItem) {
-                this._mediaItem.label.text = `${media.title} (${media.status === 'Playing' ? 'Oynatılıyor' : 'Duraklatıldı'})`;
+            if (this._mediaLabel) {
+                let mTitle = media.title.length > 26 ? media.title.substring(0, 24) + '…' : media.title;
+                this._mediaLabel.text = `${statusIcon}${mTitle}`;
             }
         } else {
-            if (this._mediaItem) {
-                this._mediaItem.label.text = 'Medya: Boşta (Oynatıcı Bekleniyor)';
+            if (this._mediaLabel) {
+                this._mediaLabel.text = 'Medya: Boşta';
             }
             this._label.text = `${pwrStr} • %${capStr}${onAc ? ' AC' : ''} • ${temp}`;
         }
@@ -579,22 +594,16 @@ class FFPowerIndicator extends PanelMenu.Button {
         let activeMode = readFile('/run/ff-power-manager/power.mode') || (onAc ? 'ac' : 'battery');
         let ctx = readFile('/run/ff-power-manager/active.context') || 'normal';
         let hzLabel = (readFile('/run/ff-power-manager/refresh.rate') || '120 Hz').split(' ')[0];
-        if (this._coreItem) {
-            let ctxTag = ctx === 'cinema' ? ' • Sinema' : '';
-            this._coreItem.label.text = `CPU: ${onlineCores} (${pMaxGhz} GHz) | ${activeMode} • ${hzLabel} Hz${ctxTag}`;
-        }
 
-        if (this._gpuBatItem) {
+        if (this._gpuBatLabel) {
             const gpuStr = getGpuStr(this._gpuInfo);
             const bat = getBatteryDetails(this._batDir, onAc);
-            this._gpuBatItem.label.text = `GPU: ${gpuStr} | ${bat.etaStr} (Sağlık %${bat.healthPct}, ${bat.cycles} döngü)`;
+            const therm = getChargerAndThermals(this._hwmonMap || {}, this._batDir, onAc);
+            this._gpuBatLabel.text = `GPU: ${gpuStr} • ${bat.etaStr} (%${bat.healthPct}) | ${therm}`;
         }
 
-        if (this._thermalsItem) {
-            this._thermalsItem.label.text = getChargerAndThermals(this._hwmonMap || {}, this._batDir, onAc);
-        }
-
-        if (this._savingsItem) {
+        if (this._coreSavLabel) {
+            let ctxTag = ctx === 'cinema' ? ' • Sinema' : '';
             let savRaw = readFile('/run/ff-power-manager/savings.json');
             let sleepRaw = readFile(LAST_SLEEP_FILE);
             let sleepSuffix = '';
@@ -606,26 +615,30 @@ class FFPowerIndicator extends PanelMenu.Button {
                     }
                 } catch (_) {}
             }
+            let savStr = `ARR + ToF aktif${sleepSuffix}`;
             if (savRaw) {
                 try {
                     const sav = JSON.parse(savRaw);
                     const offMin = Math.round((sav.screen_off_sec || 0) / 60);
                     const wh = ((sav.wh_saved || 0)).toFixed(2);
-                    this._savingsItem.label.text = `Bugün: ${offMin} dk ekran • ~${wh} Wh${sleepSuffix}`;
+                    savStr = `${offMin} dk ekran (~${wh} Wh)${sleepSuffix}`;
                 } catch (_) {}
-            } else {
-                this._savingsItem.label.text = `Akıllı Yenileme & ToF aktif${sleepSuffix}`;
             }
+            this._coreSavLabel.text = `CPU ${onlineCores} (${pMaxGhz} GHz) • ${activeMode} ${hzLabel}Hz${ctxTag} | ${savStr}`;
         }
 
         let dist = readFile('/run/ff-power-manager/sensor_telemetry.json');
-        if (dist && this._subHeader) {
-            try {
-                let tel = JSON.parse(dist);
-                if (tel.active) {
-                    this._subHeader.label.text = `ToF: ${tel.distance_cm} cm | ${tel.state.toUpperCase()} | ${pwrStr} | ${temp}`;
-                }
-            } catch (e) {}
+        if (this._subHeaderLabel) {
+            let tofLine = `${this._laptopTitle} | ${pwrStr} • ${temp}`;
+            if (dist) {
+                try {
+                    let tel = JSON.parse(dist);
+                    if (tel.active) {
+                        tofLine = `ToF: ${tel.distance_cm} cm (${tel.state.toUpperCase()}) • ${pwrStr} • ${temp}`;
+                    }
+                } catch (e) {}
+            }
+            this._subHeaderLabel.text = tofLine;
         }
     }
 
