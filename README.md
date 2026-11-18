@@ -13,6 +13,23 @@
 
 Built with a native **C & x86_64 Assembly** telemetry/CLI core (`ffctl`, `ff-tui`, `ff-presence-sensor`) paired with **Python / GTK4 / Wayland** integration — featuring **Universal Hardware Auto-Discovery** across Intel & AMD laptops (`Ubuntu`, `Debian`, `Fedora`).
 
+<p align="center">
+  <img src="docs/screenshots/showcase.gif" alt="FF Power Manager Cosmic Bento Cockpit Showcase" width="900"/>
+</p>
+
+<details>
+<summary><b>Screenshots: Bento Cockpit Overview, Per-Process Blame & Freeze, Profiles, Display & ToF</b></summary>
+
+| Cosmic Bento Telemetry Overview | Power & Drain Blame + Safe Freeze |
+| :---: | :---: |
+| <img src="docs/screenshots/overview.png" width="440"/> | <img src="docs/screenshots/blame.png" width="440"/> |
+
+| Side-by-Side Battery & AC Profiles | Multi-DE 120Hz & ToF Wave Gestures |
+| :---: | :---: |
+| <img src="docs/screenshots/profiles.png" width="440"/> | <img src="docs/screenshots/display.png" width="440"/> |
+
+</details>
+
 ---
 
 ## Why FF Power Manager vs TLP / auto-cpufreq?
@@ -47,10 +64,11 @@ Built with a native **C & x86_64 Assembly** telemetry/CLI core (`ffctl`, `ff-tui
 
 ## Key Features (v2.2.0)
 
-- **Energy & Wakeup Blame Profiler (`ffctl blame [--json]`):** Samples `/proc/[pid]/stat` and `/proc/[pid]/status` in 250ms native C to rank top processes by CPU + context-switch wakeups/sec while listing active non-suspended PCI/USB hardware — accessible both in CLI and the dedicated **Blame Profiler** tab in the GTK4 app.
+- **Energy & Wakeup Blame Profiler (`ffctl blame [--json]`):** Samples `/proc/[pid]/stat` and RAPL/battery energy in 250ms native C to rank top processes by CPU, wakeups/sec, **estimated `~Watts` & battery minutes lost**, scan active **dGPU (`D0` vs `D3cold`) zombies**, and safely pause/throttle background hogs from CLI (`ffctl throttle`) or the GTK4 **Blame Profiler** tab.
+- **USB-C PD Adapter Inspector & Hardware Wizard (`ffctl setup`, `ffctl bundle`):** Inspects negotiated USB-PD Volts/Amps/Watts with `<45W` slow-charger alerts, recommends optimal hardware settings (`ffctl setup --apply`), and exports sanitized `.tar.gz` diagnostics (`ffctl bundle`) for GitHub bug reports.
+- **Cosmic Space Bento GTK4 App (`ff-power-manager`):** Hardware-accelerated (`GSK_RENDERER=gl`) Bento cockpit over GPU-isolated corner space actors (zero central relayout overhead) with an auto-hiding bottom hover dock (`Ctrl+M` to pin), **4-card Hero Telemetry Deck**, live **Wattage/Temp Sparkline**, and **ToF Hand-Wave Gestures (`<=18cm`)**.
 - **`s2idle` Suspend Drain Telemetry (`ffctl sleep-report [--json]`):** `ff-sleep-guard` disables spurious USB/Thunderbolt wakeups before suspend, captures `energy_now` (`Wh`) and `%`, and computes exact standby consumption (`W` & `%/hr`) upon resume.
 - **Hardware Residency Audit (`ffctl doctor [--json]`):** Verifies `[s2idle]`/`[deep]` hooks, armed ACPI wakeups (`/proc/acpi/wakeup`), PCI Runtime PM ratios, P-state/EPP drivers, and `tlp`/`auto-cpufreq` conflicts in `< 2 ms`.
-- **Cosmic Space GTK4 Desktop App (`ff-power-manager`):** Translucent frosted-glass UI over a Cairo cosmic starfield (nebulae, rotating ringed planet, orbiting moon, shooting stars — auto-throttling to ~9 FPS on battery to preserve energy), featuring a **4-card Hero Telemetry Deck**, live **Wattage/Temp Sparkline Graph**, **Blame Profiler**, and custom SVG app icon.
 - **Multi-DE Battery-Only Adaptive Refresh & Focus Throttling:** Supports GNOME (`Mutter.IdleMonitor` + `DisplayConfig`), Hyprland (`hyprctl`), and KDE Plasma (`kscreen-doctor`), plus battery-only scheduler priority throttling for unfocused background browsers/Electron apps.
 - **Waybar Module, `.deb` & Fedora `.rpm` Packaging:** Ready-to-use JSON bar snippet in [contrib/waybar/](contrib/waybar/README.md), Debian package (`build-deb.sh`), and RPM spec ([packaging/ff-power-manager.spec](packaging/ff-power-manager.spec)).
 

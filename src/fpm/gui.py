@@ -302,7 +302,7 @@ class PowerManagerApp(Adw.Application):
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title='FF Power Manager', default_width=1060, default_height=820)
+        super().__init__(application=app, title='FF Power Manager', default_width=1140, default_height=820)
         self.cfg = load_config()
         self.scfg = load_sensor_config()
         self.pcfg = load_user_presence()
@@ -488,7 +488,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _wrap_scroll(self, child: Gtk.Widget) -> Gtk.ScrolledWindow:
         sw = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
-        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         sw.get_vadjustment().connect('value-changed', lambda *_: self.backdrop.notify_scroll())
         clamp = Adw.Clamp(maximum_size=1100, margin_top=14, margin_bottom=44, margin_start=18, margin_end=18)
         clamp.set_child(child)

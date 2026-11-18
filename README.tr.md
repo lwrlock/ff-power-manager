@@ -9,14 +9,28 @@
 
 [ [English](README.md) | Türkçe ]
 
-**Linux dizüstü bilgisayarlar için düşük yük bindirmeyen güç yönetimi, Çoklu Masaüstü Adaptif Yenileme (`60↔Max Hz`), uyanma suçlusu analizi (`ffctl blame`), `s2idle` uyku tüketim raporu (`ffctl sleep-report`), ToF varlık radarı ve kozmik uzay temalı GTK4 kontrol merkezi.**
+**Linux dizüstü bilgisayarlar için düşük yük bindirmeyen güç yönetimi, Çoklu Masaüstü Adaptif Yenileme (`60↔Max Hz`), uyanma/watt suçlusu analizi (`ffctl blame`), `s2idle` uyku tüketim raporu (`ffctl sleep-report`), ToF varlık/jest radarı ve kozmik uzay temalı GTK4 Bento kontrol merkezi.**
+
+<p align="center">
+  <img src="docs/screenshots/showcase.gif" alt="FF Power Manager Kozmik Bento Arayüz Turu" width="900"/>
+</p>
+
+| Kozmik Bento Genel Bakış | Süreç Watt / Dakika Çalımı & Freeze |
+| :---: | :---: |
+| <img src="docs/screenshots/overview.png" width="440"/> | <img src="docs/screenshots/blame.png" width="440"/> |
+
+| Yan Yana Pil & Priz Profilleri | Adaptif 120Hz & ToF El Hareketi Modu |
+| :---: | :---: |
+| <img src="docs/screenshots/profiles.png" width="440"/> | <img src="docs/screenshots/display.png" width="440"/> |
 
 ---
 
 ## v2.2.0 Yenilikleri
 
-- **Kozmik Uzay Temalı GTK4 Masaüstü Uygulaması (`ff-power-manager`):** Mor nebula, dönen halkalı gezegen, yörünge uydusu ve kayan yıldızlar içeren Cairo uzay sahnesi üzerine kurulu buzlu cam arayüz (pildeyken otomatik ~9 FPS güç tasarrufu moduna geçer), **4'lü Hero Telemetri Kartları**, **Canlı Watt/Sıcaklık Grafiği** ve özel SVG uygulama ikonu.
-- **Enerji & Uyandırma Suçlusu Analizi (`ffctl blame [--json]`):** 250 ms'de `/proc/[pid]` üzerinden CPU + context switch uyanmalarını ölçer, en çok güç tüketen süreçleri ve uykuya geçmemiş PCI/USB donanımları listeler (hem CLI hem GTK4 `Blame Profiler` sekmesi).
+- **Kozmik Uzay Temalı GTK4 Bento Kokpiti (`ff-power-manager`):** `GSK_RENDERER=gl` ve izole köşe GPU aktörleri (~%5 CPU tüketimi) üzerinde çalışan modern Bento kart düzeni, fare alt kenara gelince açılan tek **yüzer alt dock (`Ctrl+M`)**, **4'lü Hero Telemetri Kartları** ve canlı **Watt/Sıcaklık Grafiği**.
+- **Süreç Bazlı Watt / Pil Kaybı + Tek Tıkla Dondurma (`ffctl blame`, `ffctl throttle`):** 250 ms'de süreçlerin tahmini **`~Watt`** tüketimini ve pil ömründen eksilttiği süreyi (`minutes_lost`) hesaplar, `D0` takılı kalan **dGPU Zombi** süreçlerini yakalar ve güvenli şekilde tek tıkla dondurur (`Freeze / Resume`).
+- **USB-C PD Adaptör Müfettişi & Sihirbaz (`ffctl setup`, `ffctl bundle`):** Bağlı USB-PD şarj cihazını (`<45W` yavaş şarj uyarısı dahil) okur, tek komutla donanım kurulumu (`setup --apply`) ve arındırılmış `.tar.gz` hata paketi (`bundle`) üretir.
+- **ToF El Hareketi / Gizlilik Modu:** `ST VL53L1` sensörüyle `<=18 cm` el hareketinde medya duraklatma (`Play/Pause`), ekran karartma veya anında kilitleme.
 - **Gerçek Uyku Tüketim Raporu (`ffctl sleep-report [--json]`):** `ff-sleep-guard` her uykuda `Wh` ve `%` farkını kaydedip uyandıktan sonra ortalama bekleme tüketimini (`W` ve `%/saat`) raporlar.
 - **Çoklu Masaüstü Adaptif Yenileme & Odak Kısma:** GNOME (`Mutter`), Hyprland (`hyprctl`) ve KDE Plasma (`kscreen-doctor`) üzerinde pilde `60↔Max Hz` geçişi + odak dışındaki ağır tarayıcıların yalnızca pilde öncelik kısılması.
 - **Waybar Hazır Modülü & RPM Spec:** [contrib/waybar/](contrib/waybar/README.md) snippet'i ve Fedora `.rpm` paketi için [packaging/ff-power-manager.spec](packaging/ff-power-manager.spec).
