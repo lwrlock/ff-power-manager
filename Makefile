@@ -1,6 +1,7 @@
 CC ?= gcc
 AS ?= as
 CFLAGS ?= -O2 -Wall -Wextra -D_GNU_SOURCE
+LDFLAGS ?= -Wl,-z,noexecstack
 NATIVE_DIR = src/native
 
 BINARIES = ff-presence-sensor ffctl ff-tui test_native
@@ -17,16 +18,16 @@ $(NATIVE_DIR)/sensor_asm.o: $(NATIVE_DIR)/sensor_asm.s
 	$(AS) -o $@ $<
 
 ff-presence-sensor: $(NATIVE_DIR)/sensor_native.c $(NATIVE_DIR)/sensor_asm.o
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 ffctl: $(NATIVE_DIR)/ffctl_native.c $(NATIVE_DIR)/sensor_asm.o
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 ff-tui: $(NATIVE_DIR)/ff_tui_native.c $(NATIVE_DIR)/sensor_asm.o
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 test_native: $(NATIVE_DIR)/test_native.c $(NATIVE_DIR)/sensor_asm.o
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 compile:
 	/usr/bin/python3 -m py_compile src/fpm/*.py

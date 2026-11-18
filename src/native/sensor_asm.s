@@ -264,3 +264,5 @@ asm_atomic_write_file:
     ret
 
 .size asm_atomic_write_file, .-asm_atomic_write_file
+
+.section .note.GNU-stack,"",@progbits

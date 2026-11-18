@@ -1,5 +1,6 @@
 #!/bin/sh
 # FF Power Manager v2.2: s2idle Wakeup Guard & Suspend Drain Tracker
+export LC_ALL=C
 STATE_DIR="/run/ff-power-manager/sleep-guard"
 VAR_DIR="/var/lib/ff-power-manager"
 
