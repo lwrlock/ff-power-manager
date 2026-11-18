@@ -1,58 +1,35 @@
 # FF Power Manager v2.2
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: Ubuntu | Debian | Fedora](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora-teal.svg)](https://ubuntu.com)
-[![Desktop: GNOME | Hyprland | Plasma](https://img.shields.io/badge/Desktop-GNOME%20%7C%20Hyprland%20%7C%20Plasma-orange.svg)](https://www.gnome.org)
-[![Engine: C & x86_64 ASM](https://img.shields.io/badge/Engine-C%20%26%20x86__64%20ASM-success.svg)](#)
-[![AI-Assisted: Antigravity](https://img.shields.io/badge/AI--Destekli-Google%20DeepMind%20Antigravity-purple.svg)](#geliştirme-ve-yapay-zeka-desteği)
 [![Release: v2.2.0](https://img.shields.io/badge/Release-v2.2.0-blueviolet.svg)](https://github.com/lwrlock/ff-power-manager/releases/tag/v2.2.0)
 
 [ [English](README.md) | Türkçe ]
 
-**Linux dizüstü bilgisayarlar için düşük yük bindirmeyen güç yönetimi, Çoklu Masaüstü Adaptif Yenileme (`60↔Max Hz`), uyanma/watt suçlusu analizi (`ffctl blame`), `s2idle` uyku tüketim raporu (`ffctl sleep-report`), ToF varlık/jest radarı ve kozmik uzay temalı GTK4 Bento kontrol merkezi.**
+Linux dizüstü bilgisayarlar için güç profili yöneticisi, adaptif ekran yenileme (`60↔Max Hz`), süreç bazlı güç/uyanma analizi (`ffctl blame`), `s2idle` uyku tüketim raporu (`ffctl sleep-report`), isteğe bağlı ToF varlık sensörü desteği ve GTK4 arayüzü.
 
-<p align="center">
-  <img src="docs/screenshots/showcase.gif" alt="FF Power Manager Kozmik Bento Arayüz Turu" width="900"/>
-</p>
+![FF Power Manager Genel Bakış](docs/screenshots/overview.png)
 
-| Kozmik Bento Genel Bakış | Süreç Watt / Dakika Çalımı & Freeze |
-| :---: | :---: |
-| <img src="docs/screenshots/overview.png" width="440"/> | <img src="docs/screenshots/blame.png" width="440"/> |
+## v2.2.0 Özellikleri
 
-| Yan Yana Pil & Priz Profilleri | Adaptif 120Hz & ToF El Hareketi Modu |
-| :---: | :---: |
-| <img src="docs/screenshots/profiles.png" width="440"/> | <img src="docs/screenshots/display.png" width="440"/> |
+- **GTK4 Masaüstü Uygulaması (`ff-power-manager`):** Güç profilleri, canlı Watt/sıcaklık grafiği, süreç tüketim sekmesi ve isteğe bağlı ToF yakınlık/el hareketi (`<=18 cm`) desteği.
+- **Süreç Tüketimi ve Kısıtlama (`ffctl blame`, `ffctl throttle`):** 250 ms aralıkla `/proc/[pid]/stat` ve RAPL/pil sayaçlarını okuyarak süreçlerin tahmini Watt tüketimini ve pil süresine etkisini hesaplar, PCI/USB güç engelleyicilerini (`D0` / `D3cold`) tarar ve arka plan uygulamalarını kısıtlamayı sağlar.
+- **USB-C PD & Tanılama (`ffctl setup`, `ffctl bundle`):** Bağlı USB-PD adaptörünün Volt/Amper/Watt değerini okur (`<45W` uyarısı dahil), donanıma uygun varsayılanları uygular (`setup --apply`) ve hata bildirimi için arındırılmış `.tar.gz` paketi (`bundle`) üretir.
+- **Uyku Tüketim Raporu (`ffctl sleep-report [--json]`):** `ff-sleep-guard` uyku öncesi gereksiz USB/Thunderbolt uyandırmalarını devre dışı bırakır ve uyanışta kaybedilen `Wh`, `W` ile `%/saat` değerlerini kaydeder.
+- **Adaptif Yenileme & Odak Kısma:** Pildeyken boşa çıkınca GNOME (`Mutter`), Hyprland (`hyprctl`) ve KDE Plasma (`kscreen-doctor`) üzerinde ekran yenileme hızını düşürür; odakta olmayan ağır tarayıcı/Electron süreçlerinin önceliğini azaltır.
+- **Waybar & Paketleme:** [contrib/waybar/](contrib/waybar/README.md) modülü, `build-deb.sh` ve Fedora RPM spec ([packaging/ff-power-manager.spec](packaging/ff-power-manager.spec)) dahildir.
 
----
-
-## v2.2.0 Yenilikleri
-
-- **Kozmik Uzay Temalı GTK4 Bento Kokpiti (`ff-power-manager`):** `GSK_RENDERER=gl` ve izole köşe GPU aktörleri (~%5 CPU tüketimi) üzerinde çalışan modern Bento kart düzeni, fare alt kenara gelince açılan tek **yüzer alt dock (`Ctrl+M`)**, **4'lü Hero Telemetri Kartları** ve canlı **Watt/Sıcaklık Grafiği**.
-- **Süreç Bazlı Watt / Pil Kaybı + Tek Tıkla Dondurma (`ffctl blame`, `ffctl throttle`):** 250 ms'de süreçlerin tahmini **`~Watt`** tüketimini ve pil ömründen eksilttiği süreyi (`minutes_lost`) hesaplar, `D0` takılı kalan **dGPU Zombi** süreçlerini yakalar ve güvenli şekilde tek tıkla dondurur (`Freeze / Resume`).
-- **USB-C PD Adaptör Müfettişi & Sihirbaz (`ffctl setup`, `ffctl bundle`):** Bağlı USB-PD şarj cihazını (`<45W` yavaş şarj uyarısı dahil) okur, tek komutla donanım kurulumu (`setup --apply`) ve arındırılmış `.tar.gz` hata paketi (`bundle`) üretir.
-- **ToF El Hareketi / Gizlilik Modu:** `ST VL53L1` sensörüyle `<=18 cm` el hareketinde medya duraklatma (`Play/Pause`), ekran karartma veya anında kilitleme.
-- **Gerçek Uyku Tüketim Raporu (`ffctl sleep-report [--json]`):** `ff-sleep-guard` her uykuda `Wh` ve `%` farkını kaydedip uyandıktan sonra ortalama bekleme tüketimini (`W` ve `%/saat`) raporlar.
-- **Çoklu Masaüstü Adaptif Yenileme & Odak Kısma:** GNOME (`Mutter`), Hyprland (`hyprctl`) ve KDE Plasma (`kscreen-doctor`) üzerinde pilde `60↔Max Hz` geçişi + odak dışındaki ağır tarayıcıların yalnızca pilde öncelik kısılması.
-- **Waybar Hazır Modülü & RPM Spec:** [contrib/waybar/](contrib/waybar/README.md) snippet'i ve Fedora `.rpm` paketi için [packaging/ff-power-manager.spec](packaging/ff-power-manager.spec).
-
----
-
-## Kurulum (`.deb` veya Kaynaktan)
+## Kurulum
 
 ```bash
-# 1. Ubuntu / Debian .deb paketi ile:
+# Ubuntu / Debian .deb paketi:
 sudo apt install ./ff-power-manager_2.2.0_amd64.deb
 
-# 2. Veya kaynaktan kurulum (Ubuntu / Debian / Fedora):
+# Veya kaynaktan kurulum (Ubuntu / Debian / Fedora):
 git clone https://github.com/lwrlock/ff-power-manager.git
 cd ff-power-manager
 sudo ./install.sh
 ```
 
-## Geliştirme ve Yapay Zeka Desteği
-
-**FF Power Manager**, **Furkan (`@lwrlock`)** tarafından **Google DeepMind Antigravity** yapay zeka destekli mühendislik iş birliği ile geliştirilmektedir (HID Report 4 çözümleme, C/x86_64 Assembly optimizasyonu, GTK4 Cairo görselleştirmesi, birim testleri ve çoklu dağıtım sertleştirmesi süreçlerinde AI desteği alınmış; tüm canlı donanım ve çekirdek testleri doğrudan gerçek Linux sistemler üzerinde doğrulanmıştır).
-
 ## Lisans
 
-MIT Lisansı — Telif Hakkı (c) 2026 Furkan (**lwrlock**). Ayrıntılar için [LICENSE](LICENSE).
+MIT — ayrıntılar için [LICENSE](LICENSE).
