@@ -406,6 +406,11 @@ class ConfigTests(unittest.TestCase):
         fake_self._meteors = cosmic_ui.CosmicBackdrop._init_meteors(2)
         fake_self._meteors[0]['active'] = True
         fake_self._meteors[0]['progress'] = 0.5
+        fake_self._planet_cache = None
+        fake_self._planet_cache_r = 0.0
+        fake_self._exo_cache = None
+        fake_self._exo_cache_r = 0.0
+        fake_self._ensure_planet_cache = lambda r: cosmic_ui.CosmicBackdrop._ensure_planet_cache(fake_self, r)
         cosmic_ui.CosmicBackdrop._draw_nebula(fake_self, cr, 640.0, 400.0, 1.5)
         cosmic_ui.CosmicBackdrop._draw_stars(fake_self, cr, 640.0, 400.0, 1.5)
         cosmic_ui.CosmicBackdrop._draw_shooting_stars(fake_self, cr, 640.0, 400.0)

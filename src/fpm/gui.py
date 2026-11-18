@@ -184,11 +184,12 @@ def load_sensor_telemetry() -> dict | None:
 
 
 def is_active(unit: str, user: bool = False) -> bool:
-    cmd = ['/usr/bin/systemctl']
-    if user:
-        cmd.append('--user')
-    cmd += ['is-active', '--quiet', unit]
-    return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if not user:
+        return os.path.lexists(f'/run/systemd/units/invocation:{unit}')
+    return subprocess.run(
+        ['/usr/bin/systemctl', '--user', 'is-active', '--quiet', unit],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
 
 
 class _CompatToolbarView(Gtk.Box):
@@ -272,6 +273,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._lenovo_syncing = False
         self._local_samples: deque = deque(maxlen=90)
         self._blame_busy = False
+        self._refresh_busy = False
+        self._last_doctor_at = 0.0
 
         # Layered desktop app layout: animated cosmic space canvas + translucent frosted glass UI
         root_overlay = Gtk.Overlay()
@@ -286,15 +289,23 @@ class MainWindow(Adw.ApplicationWindow):
         self.toast_overlay.set_child(toolbar)
 
         self.stack = Adw.ViewStack()
-        title = Adw.ViewSwitcherTitle(stack=self.stack, title='FF Power Manager')
-        header = Adw.HeaderBar(title_widget=title)
+        win_title = Adw.WindowTitle(title='FF Power Manager', subtitle='Cosmic Control Center')
+        header = Adw.HeaderBar(title_widget=win_title)
+
+        self.menu_toggle_btn = Gtk.ToggleButton(
+            icon_name='view-bottom-pane-symbolic',
+            active=True,
+            tooltip_text='Alt Menüyü Gizle / Göster (Ctrl+M)',
+        )
+        self.menu_toggle_btn.add_css_class('flat')
+        header.pack_start(self.menu_toggle_btn)
 
         tui_btn = Gtk.Button(icon_name='utilities-terminal-symbolic', tooltip_text='Open Terminal Dashboard (ff-tui)')
         tui_btn.add_css_class('flat')
         tui_btn.connect('clicked', lambda *_: self._launch_tui())
         header.pack_start(tui_btn)
 
-        fx_btn = Gtk.ToggleButton(label='Space FX', active=True, tooltip_text='Toggle animated cosmic space canvas')
+        fx_btn = Gtk.ToggleButton(label='Space FX', active=True, tooltip_text='Toggle cosmic space background')
         fx_btn.add_css_class('flat')
         fx_btn.connect('toggled', lambda btn: self.backdrop.set_enabled(btn.get_active()))
         header.pack_start(fx_btn)
@@ -312,13 +323,30 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar.add_top_bar(header)
         toolbar.set_content(self.stack)
 
-        switcher = Adw.ViewSwitcherBar(stack=self.stack)
-        switcher.set_reveal(True)
-        toolbar.add_bottom_bar(switcher)
+        # Single collapsible bottom navigation bar (no duplicate top menu)
+        self._nav_revealer = Gtk.Revealer(
+            transition_type=Gtk.RevealerTransitionType.SLIDE_UP,
+            transition_duration=200,
+            reveal_child=True,
+        )
+        nav_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, halign=Gtk.Align.CENTER)
+        nav_box.add_css_class('bottom-bar')
+        nav_box.set_hexpand(True)
+        switcher = Adw.ViewSwitcher(stack=self.stack, halign=Gtk.Align.CENTER)
+        if hasattr(Adw, 'ViewSwitcherPolicy'):
+            switcher.set_policy(Adw.ViewSwitcherPolicy.WIDE)
+        nav_box.append(switcher)
+        self._nav_revealer.set_child(nav_box)
+        toolbar.add_bottom_bar(self._nav_revealer)
+
+        self.menu_toggle_btn.connect('toggled', self._on_toggle_bottom_menu)
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.connect('key-pressed', self._on_key_pressed)
+        self.add_controller(key_ctrl)
 
         for page_widget, name, title_str, icon_str in [
             (self._overview_page(), 'overview', 'Overview', 'view-dashboard-symbolic'),
-            (self._profiler_page(), 'profiler', 'Blame Profiler', 'system-search-symbolic'),
+            (self._profiler_page(), 'profiler', 'Blame', 'system-search-symbolic'),
             (self._mode_page('battery'), 'battery', 'Battery', 'battery-good-symbolic'),
             (self._mode_page('ac'), 'ac', 'AC Power', 'power-profile-performance-symbolic'),
             (self._presence_page(), 'presence', 'Display & Presence', 'system-lock-screen-symbolic'),
@@ -330,9 +358,19 @@ class MainWindow(Adw.ApplicationWindow):
                 vp = self.stack.add_titled(page_widget, name, title_str)
                 vp.set_icon_name(icon_str)
 
-        self.live_source = GLib.timeout_add_seconds(2, self._live_tick)
+        self.live_source = GLib.timeout_add_seconds(3, self._live_tick)
         self.refresh_status()
         self._run_blame_async()
+
+    def _on_toggle_bottom_menu(self, btn) -> None:
+        self._nav_revealer.set_reveal_child(btn.get_active())
+
+    def _on_key_pressed(self, _ctrl, keyval, _keycode, state) -> bool:
+        ctrl_mask = Gdk.ModifierType.CONTROL_MASK
+        if (state & ctrl_mask) and keyval in (Gdk.KEY_m, Gdk.KEY_M):
+            self.menu_toggle_btn.set_active(not self.menu_toggle_btn.get_active())
+            return True
+        return False
 
     def toast(self, text: str) -> None:
         self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=3))
@@ -874,147 +912,171 @@ class MainWindow(Adw.ApplicationWindow):
         threading.Thread(target=_worker, daemon=True).start()
 
     def refresh_status(self) -> None:
-        s = status_snapshot()
-        temp_c = _read_pkg_temp_c()
-        watts_val = s.get('watts')
-        bat_pct = s.get('battery_percent')
-        health = s.get('battery_health', {}) or {}
-        mode_lbl = 'Battery' if s.get('mode') == 'battery' else 'AC Mains'
-
-        # Update Hero Deck
-        self.hero_watts.set_label('-- W' if watts_val is None else f"{watts_val:.1f} W")
-        self.hero_watts_sub.set_label(f"{mode_lbl} • {s.get('refresh_rate', 'Adaptive')}")
-        self.hero_temp.set_label(f"{temp_c}°C" if temp_c > 0 else '—°C')
-        self.hero_temp_sub.set_label(f"EPP: {s.get('epp') or '—'}")
-        self.hero_bat.set_label(f"{bat_pct}%" if bat_pct is not None else '—%')
-        hpct = health.get('health_pct', 100.0)
-        cyc = health.get('cycle_count', 0)
-        self.hero_bat_sub.set_label(f"Health {hpct:.1f}% • {cyc} cycles")
-
-        # Update Sleep Card
-        try:
-            if SLEEP_FILE.exists():
-                sl = json.loads(SLEEP_FILE.read_text(encoding='utf-8'))
-                dur_m = int(sl.get('duration_sec', 0)) // 60
-                self.hero_sleep.set_label(f"{sl.get('avg_watts', 0.0):.2f} W")
-                self.hero_sleep_sub.set_label(f"{dur_m}m • {sl.get('pct_per_hour', 0.0):.2f}%/hr ({sl.get('sleep_mode', 's2idle')})")
-        except Exception:
-            pass
-
-        # Update Live Sparkline Chart (prefer daemon ring buffer, fall back to GUI rolling buffer)
-        samples = []
-        try:
-            if HIST_FILE.exists():
-                parsed = json.loads(HIST_FILE.read_text(encoding='utf-8'))
-                if isinstance(parsed, list) and len(parsed) >= 2:
-                    samples = parsed
-        except Exception:
-            pass
-        if not samples:
-            self._local_samples.append({
-                'ts': int(time.time()),
-                'watts': float(watts_val) if watts_val is not None else 0.0,
-                'temp_c': int(temp_c),
-            })
-            samples = list(self._local_samples)
-        if hasattr(self, 'chart'):
-            self.chart.set_samples(samples)
-
-        presence_map = {
-            'present': 'User Present (At Desk)',
-            'absent': 'User Away (Standby Mode)',
-            'disabled': 'Disabled',
-            'unknown': 'Detecting...',
-            'error': 'Sensor Hardware Error',
-        }
-        raw_pres = s.get('presence_state') or 'disabled'
-
-        values = {
-            'mode': 'Battery (Discharging)' if s['mode'] == 'battery' else 'AC Power (Mains Online)',
-            'cpu_topology': s.get('cpu_topology', 'Dynamic Online'),
-            'refresh_rate': s.get('refresh_rate', '—'),
-            'gnome_profile': s['gnome_profile'] or '—',
-            'turbo': 'Enabled (Dynamic Boost)' if s['turbo'] else ('Disabled' if s['turbo'] is not None else '—'),
-            'pcie_aspm': s.get('pcie_aspm', '—'),
-            'gpu_perf': s.get('gpu_perf', '—'),
-            'vaapi': s.get('vaapi', '—'),
-            'net_opt': s.get('net_opt', '—'),
-            'zram': s.get('zram', '—'),
-        }
-        for key, value in values.items():
-            if hasattr(self, 'rows') and key in self.rows:
-                self.rows[key].set_subtitle(value)
-
-        tel = load_sensor_telemetry()
-        if tel and hasattr(self, 'tof_status_row'):
-            st = tel.get('state', 'unknown')
-            dist_cm = tel.get('distance_cm', 0)
-            thresh_cm = tel.get('threshold_cm', 120)
-            pkts = tel.get('packet_count', 0)
-            sec_ago = tel.get('last_packet_sec_ago', 0.0)
-
-            if st == 'present':
-                self.tof_badge.set_label('AT DESK')
-                self.tof_badge.set_css_classes(['badge-active'])
-                self.tof_status_row.set_subtitle('User detected at desk')
-            elif st == 'absent':
-                self.tof_badge.set_label('AWAY')
-                self.tof_badge.set_css_classes(['badge-standby'])
-                self.tof_status_row.set_subtitle('User departed (&gt; 1.2m threshold)')
-            else:
-                self.tof_badge.set_label('OFFLINE')
-                self.tof_badge.set_css_classes(['badge-disabled'])
-                self.tof_status_row.set_subtitle('Sensor offline or unavailable')
-
-            self.tof_distance_row.set_subtitle(f"{dist_cm} cm / {thresh_cm} cm (1.2m Threshold)")
-            frac = min(1.0, max(0.0, dist_cm / thresh_cm)) if thresh_cm > 0 else 0.5
-            self.tof_bar.set_fraction(frac)
-            self.tof_telemetry_row.set_subtitle(f"{pkts} packets received ({sec_ago:.1f}s ago) • Native ASM Engine")
-        elif hasattr(self, 'tof_status_row'):
-            self.tof_status_row.set_subtitle(presence_map.get(raw_pres, raw_pres))
-
-        lenovo = s.get('lenovo', {})
-        if lenovo and hasattr(self, 'lenovo_cm_row'):
-            self._lenovo_syncing = True
-            if lenovo.get('conservation_mode') is not None:
-                self.lenovo_cm_row.set_active(bool(lenovo['conservation_mode']))
-            if lenovo.get('fn_lock') is not None:
-                self.lenovo_fn_row.set_active(bool(lenovo['fn_lock']))
-            if lenovo.get('usb_charging') is not None:
-                self.lenovo_usb_row.set_active(bool(lenovo['usb_charging']))
-            self._lenovo_syncing = False
-
-        if hasattr(self, 'diag_rows'):
-            for row in self.diag_rows:
-                row.set_subtitle('Running (Active)' if is_active(row._unit, row._user) else 'Stopped (Inactive)')
-        self._refresh_doctor_audit()
-
-    def _refresh_doctor_audit(self) -> None:
-        if not hasattr(self, 'audit_rows'):
+        if self._refresh_busy:
             return
-        ffctl_bin = '/usr/local/bin/ffctl' if os.path.exists('/usr/local/bin/ffctl') else './ffctl'
-        try:
-            out = subprocess.check_output([ffctl_bin, 'doctor', '--json'], text=True, stderr=subprocess.DEVNULL, timeout=2.0)
-            d = json.loads(out)
-        except Exception:
+        self._refresh_busy = True
+        want_doctor = (time.monotonic() - self._last_doctor_at) >= 12.0 or self._last_doctor_at == 0.0
+
+        def _worker():
+            s = status_snapshot()
+            temp_c = _read_pkg_temp_c()
+            tel = load_sensor_telemetry()
+
+            sleep_data = None
+            try:
+                if SLEEP_FILE.exists():
+                    sleep_data = json.loads(SLEEP_FILE.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+
+            samples = []
+            try:
+                if HIST_FILE.exists():
+                    parsed = json.loads(HIST_FILE.read_text(encoding='utf-8'))
+                    if isinstance(parsed, list) and len(parsed) >= 2:
+                        samples = parsed
+            except Exception:
+                pass
+
+            svc_states = []
+            if hasattr(self, 'diag_rows'):
+                for row in self.diag_rows:
+                    svc_states.append((row, is_active(row._unit, row._user)))
+
+            doctor_data = None
+            if want_doctor:
+                ffctl_bin = '/usr/local/bin/ffctl' if os.path.exists('/usr/local/bin/ffctl') else './ffctl'
+                try:
+                    out = subprocess.check_output([ffctl_bin, 'doctor', '--json'], text=True, stderr=subprocess.DEVNULL, timeout=2.0)
+                    doctor_data = json.loads(out)
+                except Exception:
+                    doctor_data = False
+
+            def _apply_ui():
+                self._refresh_busy = False
+                watts_val = s.get('watts')
+                if (watts_val is None or watts_val <= 0.1) and samples:
+                    watts_val = samples[-1].get('watts')
+                bat_pct = s.get('battery_percent')
+                health = s.get('battery_health', {}) or {}
+                mode_lbl = 'Battery' if s.get('mode') == 'battery' else 'AC Mains'
+
+                self.hero_watts.set_label('-- W' if watts_val is None else f"{float(watts_val):.1f} W")
+                self.hero_watts_sub.set_label(f"{mode_lbl} • {s.get('refresh_rate', 'Adaptive')}")
+                self.hero_temp.set_label(f"{temp_c}°C" if temp_c > 0 else '—°C')
+                self.hero_temp_sub.set_label(f"EPP: {s.get('epp') or '—'}")
+                self.hero_bat.set_label(f"{bat_pct}%" if bat_pct is not None else '—%')
+                hpct = health.get('health_pct', 100.0)
+                cyc = health.get('cycle_count', 0)
+                self.hero_bat_sub.set_label(f"Health {hpct:.1f}% • {cyc} cycles")
+
+                if sleep_data:
+                    dur_m = int(sleep_data.get('duration_sec', 0)) // 60
+                    self.hero_sleep.set_label(f"{sleep_data.get('avg_watts', 0.0):.2f} W")
+                    self.hero_sleep_sub.set_label(f"{dur_m}m • {sleep_data.get('pct_per_hour', 0.0):.2f}%/hr ({sleep_data.get('sleep_mode', 's2idle')})")
+
+                chart_samples = samples
+                if not chart_samples:
+                    self._local_samples.append({
+                        'ts': int(time.time()),
+                        'watts': float(watts_val) if watts_val is not None else 0.0,
+                        'temp_c': int(temp_c),
+                    })
+                    chart_samples = list(self._local_samples)
+                if hasattr(self, 'chart'):
+                    self.chart.set_samples(chart_samples)
+
+                presence_map = {
+                    'present': 'User Present (At Desk)',
+                    'absent': 'User Away (Standby Mode)',
+                    'disabled': 'Disabled',
+                    'unknown': 'Detecting...',
+                    'error': 'Sensor Hardware Error',
+                }
+                raw_pres = s.get('presence_state') or 'disabled'
+
+                values = {
+                    'mode': 'Battery (Discharging)' if s['mode'] == 'battery' else 'AC Power (Mains Online)',
+                    'cpu_topology': s.get('cpu_topology', 'Dynamic Online'),
+                    'refresh_rate': s.get('refresh_rate', '—'),
+                    'gnome_profile': s['gnome_profile'] or '—',
+                    'turbo': 'Enabled (Dynamic Boost)' if s['turbo'] else ('Disabled' if s['turbo'] is not None else '—'),
+                    'pcie_aspm': s.get('pcie_aspm', '—'),
+                    'gpu_perf': s.get('gpu_perf', '—'),
+                    'vaapi': s.get('vaapi', '—'),
+                    'net_opt': s.get('net_opt', '—'),
+                    'zram': s.get('zram', '—'),
+                }
+                for key, value in values.items():
+                    if hasattr(self, 'rows') and key in self.rows:
+                        self.rows[key].set_subtitle(value)
+
+                if tel and hasattr(self, 'tof_status_row'):
+                    st = tel.get('state', 'unknown')
+                    dist_cm = tel.get('distance_cm', 0)
+                    thresh_cm = tel.get('threshold_cm', 120)
+                    pkts = tel.get('packet_count', 0)
+                    sec_ago = tel.get('last_packet_sec_ago', 0.0)
+
+                    if st == 'present':
+                        self.tof_badge.set_label('AT DESK')
+                        self.tof_badge.set_css_classes(['badge-active'])
+                        self.tof_status_row.set_subtitle('User detected at desk')
+                    elif st == 'absent':
+                        self.tof_badge.set_label('AWAY')
+                        self.tof_badge.set_css_classes(['badge-standby'])
+                        self.tof_status_row.set_subtitle('User departed (&gt; 1.2m threshold)')
+                    else:
+                        self.tof_badge.set_label('OFFLINE')
+                        self.tof_badge.set_css_classes(['badge-disabled'])
+                        self.tof_status_row.set_subtitle('Sensor offline or unavailable')
+
+                    self.tof_distance_row.set_subtitle(f"{dist_cm} cm / {thresh_cm} cm (1.2m Threshold)")
+                    frac = min(1.0, max(0.0, dist_cm / thresh_cm)) if thresh_cm > 0 else 0.5
+                    self.tof_bar.set_fraction(frac)
+                    self.tof_telemetry_row.set_subtitle(f"{pkts} packets received ({sec_ago:.1f}s ago) • Native ASM Engine")
+                elif hasattr(self, 'tof_status_row'):
+                    self.tof_status_row.set_subtitle(presence_map.get(raw_pres, raw_pres))
+
+                lenovo = s.get('lenovo', {})
+                if lenovo and hasattr(self, 'lenovo_cm_row'):
+                    self._lenovo_syncing = True
+                    if lenovo.get('conservation_mode') is not None:
+                        self.lenovo_cm_row.set_active(bool(lenovo['conservation_mode']))
+                    if lenovo.get('fn_lock') is not None:
+                        self.lenovo_fn_row.set_active(bool(lenovo['fn_lock']))
+                    if lenovo.get('usb_charging') is not None:
+                        self.lenovo_usb_row.set_active(bool(lenovo['usb_charging']))
+                    self._lenovo_syncing = False
+
+                for row, active_flag in svc_states:
+                    row.set_subtitle('Running (Active)' if active_flag else 'Stopped (Inactive)')
+
+                if doctor_data is not None and hasattr(self, 'audit_rows'):
+                    self._last_doctor_at = time.monotonic()
+                    self._apply_doctor_ui(doctor_data if isinstance(doctor_data, dict) else None, sleep_data)
+
+                return GLib.SOURCE_REMOVE
+
+            GLib.idle_add(_apply_ui)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_doctor_ui(self, d: dict | None, sl: dict | None = None) -> None:
+        if not d:
             for r in self.audit_rows.values():
                 r.set_subtitle('ffctl doctor unavailable (run make build / install)')
             return
-
         guard = 'installed' if d.get('sleep_guard_hook') else 'missing'
         self.audit_rows['sleep'].set_subtitle(
             f"Mode: {d.get('mem_sleep', 'unknown')} | Sleep Guard: {guard} | {d.get('acpi_non_lid_wakeups_enabled', 0)} ACPI wake triggers"
         )
-        try:
-            sl = json.loads(SLEEP_FILE.read_text(encoding='utf-8')) if SLEEP_FILE.exists() else None
-            if sl:
-                self.audit_rows['sleep_report'].set_subtitle(
-                    f"Last sleep: {sl.get('duration_sec', 0) // 60}m • {sl.get('wh_used', 0.0):.3f} Wh ({sl.get('avg_watts', 0.0):.2f} W / {sl.get('pct_per_hour', 0.0):.2f}%/hr)"
-                )
-            else:
-                self.audit_rows['sleep_report'].set_subtitle('No suspend cycle recorded yet (captured automatically after sleep).')
-        except Exception:
-            pass
+        if sl:
+            self.audit_rows['sleep_report'].set_subtitle(
+                f"Last sleep: {sl.get('duration_sec', 0) // 60}m • {sl.get('wh_used', 0.0):.3f} Wh ({sl.get('avg_watts', 0.0):.2f} W / {sl.get('pct_per_hour', 0.0):.2f}%/hr)"
+            )
+        else:
+            self.audit_rows['sleep_report'].set_subtitle('No suspend cycle recorded yet (captured automatically after sleep).')
         self.audit_rows['cpu_driver'].set_subtitle(
             f"Driver: {d.get('scaling_driver', '—')} | EPP: {d.get('epp', '—')}"
         )
@@ -1026,6 +1088,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.audit_rows['conflicts'].set_subtitle(f"WARNING: Conflicting {conf} detected!")
         else:
             self.audit_rows['conflicts'].set_subtitle('OK — No conflicting power daemons active')
+
+    def _refresh_doctor_audit(self) -> None:
+        self._last_doctor_at = 0.0
+        self.refresh_status()
 
     def _toggle_lenovo(self, feat: str, active: bool) -> None:
         if self._lenovo_syncing:

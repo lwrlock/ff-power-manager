@@ -965,25 +965,31 @@ def on_battery_from_sysfs() -> bool:
 
 _LAST_RAPL_UJ: int | None = None
 _LAST_RAPL_TS: float | None = None
+_LAST_RAPL_WATTS: float | None = None
 
 
-def _read_rapl_compute_uj() -> int | None:
-    """Read CPU Core + GPU Uncore energy in microjoules (with fallback to Package)."""
-    c_path = pathlib.Path('/sys/class/powercap/intel-rapl:0:0/energy_uj')
-    u_path = pathlib.Path('/sys/class/powercap/intel-rapl:0:1/energy_uj')
+def _read_rapl_compute_uj() -> tuple[int, int] | None:
+    """Read (energy_uj, max_energy_range_uj) from primary package RAPL node or fallback sub-domains."""
     p_path = pathlib.Path('/sys/class/powercap/intel-rapl:0/energy_uj')
+    p_max = pathlib.Path('/sys/class/powercap/intel-rapl:0/max_energy_range_uj')
     try:
-        if c_path.exists() and u_path.exists():
-            return int(c_path.read_text().strip()) + int(u_path.read_text().strip())
         if p_path.exists():
-            return int(p_path.read_text().strip())
+            e = int(p_path.read_text().strip())
+            mx = int(p_max.read_text().strip()) if p_max.exists() else 262143328850
+            return e, mx
+    except Exception:
+        pass
+    c_path = pathlib.Path('/sys/class/powercap/intel-rapl:0:0/energy_uj')
+    try:
+        if c_path.exists():
+            return int(c_path.read_text().strip()), 262143328850
     except Exception:
         pass
     return None
 
 
 def power_now_watts() -> float | None:
-    global _LAST_RAPL_UJ, _LAST_RAPL_TS
+    global _LAST_RAPL_UJ, _LAST_RAPL_TS, _LAST_RAPL_WATTS
     for p in sorted(glob.glob('/sys/class/power_supply/BAT*/power_now')):
         try:
             val = int(pathlib.Path(p).read_text().strip())
@@ -1001,28 +1007,37 @@ def power_now_watts() -> float | None:
                     return (c * v) / 1_000_000_000_000.0
         except Exception:
             continue
-    # Fallback to Intel RAPL Compute (Core + GPU + 1.8W SoC baseline) when on AC
-    now_uj = _read_rapl_compute_uj()
-    if now_uj is not None:
+    # Fallback to Intel RAPL Package + 1.8W platform baseline when on AC
+    rapl = _read_rapl_compute_uj()
+    if rapl is not None:
+        now_uj, max_uj = rapl
         try:
             now_ts = time.monotonic()
             if _LAST_RAPL_UJ is not None and _LAST_RAPL_TS is not None:
                 dt = now_ts - _LAST_RAPL_TS
-                if dt >= 0.08 and now_uj >= _LAST_RAPL_UJ:
-                    w = 1.80 + (now_uj - _LAST_RAPL_UJ) / (dt * 1_000_000.0)
+                if dt >= 0.08:
+                    delta = (now_uj - _LAST_RAPL_UJ) if now_uj >= _LAST_RAPL_UJ else ((max_uj - _LAST_RAPL_UJ) + now_uj)
+                    w = 1.80 + delta / (dt * 1_000_000.0)
                     _LAST_RAPL_UJ, _LAST_RAPL_TS = now_uj, now_ts
-                    return round(w, 2)
-            # First call: sample over 120ms
-            time.sleep(0.12)
-            now2_uj = _read_rapl_compute_uj()
+                    if 0.5 <= w <= 220.0:
+                        _LAST_RAPL_WATTS = round(w, 2)
+                        return _LAST_RAPL_WATTS
+                return _LAST_RAPL_WATTS
+            # First sample over 90ms
+            time.sleep(0.09)
+            rapl2 = _read_rapl_compute_uj()
             now2_ts = time.monotonic()
-            if now2_uj is not None and now2_uj >= now_uj and (now2_ts - now_ts) > 0:
+            if rapl2 is not None and (now2_ts - now_ts) > 0:
+                now2_uj, _ = rapl2
+                delta = (now2_uj - now_uj) if now2_uj >= now_uj else ((max_uj - now_uj) + now2_uj)
                 _LAST_RAPL_UJ, _LAST_RAPL_TS = now2_uj, now2_ts
-                w = 1.80 + (now2_uj - now_uj) / ((now2_ts - now_ts) * 1_000_000.0)
-                return round(w, 2)
+                w = 1.80 + delta / ((now2_ts - now_ts) * 1_000_000.0)
+                if 0.5 <= w <= 220.0:
+                    _LAST_RAPL_WATTS = round(w, 2)
+                    return _LAST_RAPL_WATTS
         except Exception:
             pass
-    return None
+    return _LAST_RAPL_WATTS
 
 
 def battery_percent() -> int | None:
