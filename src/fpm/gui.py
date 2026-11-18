@@ -24,6 +24,7 @@ from .core import (
     RUN_DIR,
     SENSOR_CONFIG_PATH,
     _run_helper,
+    dgpu_zombie_report,
     load_config,
     load_sensor_config,
     save_and_apply_config,
@@ -33,6 +34,7 @@ from .core import (
     status_snapshot,
 )
 from .cosmic_ui import CosmicBackdrop, TelemetrySparklineChart
+from .tools import create_diagnostics_bundle, hardware_setup_scan
 
 USER_CFG = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
 SYSTEM_SENSOR = 'ff-presence-sensor.service'
@@ -55,6 +57,7 @@ DEFAULT_PRESENCE = {
     'oled_screen_care': False,
     'oled_dim_inactive_sec': 0,
     'inhibit_on_media': True,
+    'tof_gesture_mode': 'off',
 }
 
 COSMIC_CSS = b"""
@@ -673,9 +676,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.rows = {}
         for key, k_label in [
             ('mode', 'Power Source'),
+            ('charger_pd', 'USB-C PD / Charger'),
             ('cpu_topology', 'CPU Topology'),
             ('refresh_rate', 'Display Refresh'),
             ('gpu_perf', 'GPU Clock'),
+            ('dgpu_state', 'Discrete GPU (Zombies)'),
             ('pcie_aspm', 'PCIe ASPM'),
             ('turbo', 'Turbo Boost'),
         ]:
@@ -761,13 +766,18 @@ class MainWindow(Adw.ApplicationWindow):
             proc_card.append(row_box)
             self.blame_proc_rows.append((title_l, meta_l, pbar))
 
-        hw_card = self._card('Active Bus Devices (Not Suspended)')
+        hw_card = self._card('Active Bus Devices & dGPU Watch')
+        r_dgpu, self.blame_dgpu_lbl = self._kv_row('Discrete GPU (D0)', 'Scanning...')
         r_pci, self.blame_pci_lbl = self._kv_row('PCI Devices', 'Scanning...')
         r_usb, self.blame_usb_lbl = self._kv_row('USB Peripherals', 'Scanning...')
+        self.blame_dgpu_list = Gtk.Label(label='—', xalign=0.0, wrap=True)
+        self.blame_dgpu_list.add_css_class('section-sub')
         self.blame_pci_list = Gtk.Label(label='—', xalign=0.0, wrap=True)
         self.blame_pci_list.add_css_class('section-sub')
         self.blame_usb_list = Gtk.Label(label='—', xalign=0.0, wrap=True)
         self.blame_usb_list.add_css_class('section-sub')
+        hw_card.append(r_dgpu)
+        hw_card.append(self.blame_dgpu_list)
         hw_card.append(r_pci)
         hw_card.append(self.blame_pci_list)
         hw_card.append(r_usb)
@@ -913,6 +923,13 @@ class MainWindow(Adw.ApplicationWindow):
             self.presence_switches[key] = sw
             right.append(rsw)
 
+        gesture_row, self.gesture_combo = self._combo_ctrl(
+            'ToF Wave Gesture (<=18cm)',
+            ['off', 'media_pause', 'privacy_dim', 'lock_screen'],
+            str(self.pcfg.get('tof_gesture_mode', 'off')),
+        )
+        right.append(gesture_row)
+
         save_btn = Gtk.Button(label='Save & Apply Display + Presence Config', margin_top=6)
         save_btn.add_css_class('suggested-action')
         save_btn.add_css_class('pill-btn')
@@ -947,6 +964,11 @@ class MainWindow(Adw.ApplicationWindow):
         reset_btn.connect('clicked', self._safe_reset)
         svc_card.append(reset_btn)
 
+        setup_btn = Gtk.Button(label='Run Hardware Setup Wizard (ffctl setup --apply)', margin_top=6)
+        setup_btn.add_css_class('profile-pill')
+        setup_btn.connect('clicked', self._run_setup_wizard)
+        svc_card.append(setup_btn)
+
         audit_card = self._card('Kernel & Power Residency Audit (ffctl doctor)', 'Hardware verification under < 2ms native C probe', accent=True)
         self.audit_rows = {}
         for key, label in [
@@ -960,11 +982,17 @@ class MainWindow(Adw.ApplicationWindow):
             self.audit_rows[key] = vl
             audit_card.append(r)
 
-        audit_btn = Gtk.Button(label='Run Hardware Audit Now', margin_top=8)
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, margin_top=8)
+        audit_btn = Gtk.Button(label='Run Hardware Audit Now', hexpand=True)
         audit_btn.add_css_class('suggested-action')
         audit_btn.add_css_class('pill-btn')
         audit_btn.connect('clicked', lambda *_: (self._refresh_doctor_audit(), self.toast('Hardware residency audit refreshed.')))
-        audit_card.append(audit_btn)
+        bundle_btn = Gtk.Button(label='Export Diagnostics Bundle (.tar.gz)', hexpand=True)
+        bundle_btn.add_css_class('profile-pill')
+        bundle_btn.connect('clicked', self._export_bundle)
+        btn_row.append(audit_btn)
+        btn_row.append(bundle_btn)
+        audit_card.append(btn_row)
 
         grid.attach(svc_card, 0, 0, 1, 1)
         grid.attach(audit_card, 1, 0, 1, 1)
@@ -996,16 +1024,37 @@ class MainWindow(Adw.ApplicationWindow):
 
         def _worker():
             data = None
+            dgpu = None
             try:
                 out = subprocess.check_output([ffctl_bin, 'blame', '--json'], text=True, stderr=subprocess.DEVNULL, timeout=3.0)
                 data = json.loads(out)
             except Exception:
                 data = None
+            try:
+                dgpu = dgpu_zombie_report()
+            except Exception:
+                dgpu = None
 
             def _apply_ui():
                 self._blame_busy = False
                 if not hasattr(self, 'blame_proc_rows'):
                     return GLib.SOURCE_REMOVE
+                if dgpu is not None and hasattr(self, 'blame_dgpu_lbl'):
+                    devs = dgpu.get('dgpus', [])
+                    awake = dgpu.get('awake_count', 0)
+                    blockers = dgpu.get('blockers', [])
+                    if not devs:
+                        self.blame_dgpu_lbl.set_label('Integrated GPU Only')
+                        self.blame_dgpu_list.set_label('No secondary discrete GPU detected')
+                    elif awake == 0:
+                        self.blame_dgpu_lbl.set_label(f"{len(devs)} dGPU Suspended (D3cold)")
+                        self.blame_dgpu_list.set_label('Discrete GPU asleep — 0W zombie draw')
+                    else:
+                        self.blame_dgpu_lbl.set_label(f"{awake} dGPU AWAKE (D0!)")
+                        if blockers:
+                            self.blame_dgpu_list.set_label(', '.join(f"{b['name']} (PID {b['pid']})" for b in blockers[:5]))
+                        else:
+                            self.blame_dgpu_list.set_label(f"Slot {', '.join(g['slot'] for g in devs if g.get('awake'))} active")
                 if not data:
                     self.blame_proc_rows[0][0].set_label('Blame profiler unavailable')
                     return GLib.SOURCE_REMOVE
@@ -1106,14 +1155,28 @@ class MainWindow(Adw.ApplicationWindow):
                     chart_samples = list(self._local_samples)
                 self.chart.set_samples(chart_samples)
 
+                pd = s.get('charger_pd', {}) or {}
+                dgpu = s.get('dgpu', {}) or {}
+                dgpus = dgpu.get('dgpus', [])
+                if not dgpus:
+                    dgpu_txt = 'iGPU Only (Optimal)'
+                elif dgpu.get('awake_count', 0) == 0:
+                    dgpu_txt = f"{len(dgpus)} dGPU Asleep (D3cold)"
+                else:
+                    blks = dgpu.get('blockers', [])
+                    blk_s = f" ({blks[0]['name']})" if blks else ''
+                    dgpu_txt = f"{dgpu['awake_count']} AWAKE (D0){blk_s}"
+
                 values = {
                     'mode': 'Battery (Discharging)' if s['mode'] == 'battery' else 'AC Power (Mains)',
+                    'charger_pd': pd.get('label', '—'),
                     'cpu_topology': s.get('cpu_topology', 'Dynamic Online'),
                     'refresh_rate': s.get('refresh_rate', '—'),
                     'gnome_profile': s['gnome_profile'] or '—',
                     'turbo': 'Enabled' if s['turbo'] else ('Disabled' if s['turbo'] is not None else '—'),
                     'pcie_aspm': s.get('pcie_aspm', '—'),
                     'gpu_perf': s.get('gpu_perf', '—'),
+                    'dgpu_state': dgpu_txt,
                     'vaapi': s.get('vaapi', '—'),
                     'net_opt': s.get('net_opt', '—'),
                     'zram': s.get('zram', '—'),
@@ -1287,6 +1350,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.pcfg['oled_dim_inactive_sec'] = int(self.oled_dim_spin.get_value())
         for k, sw in self.presence_switches.items():
             self.pcfg[k] = sw.get_active()
+        if hasattr(self, 'gesture_combo'):
+            self.pcfg['tof_gesture_mode'] = self.gesture_combo._values[self.gesture_combo.get_selected()]
         try:
             USER_CFG.parent.mkdir(parents=True, exist_ok=True)
             USER_CFG.write_text(json.dumps(self.pcfg, indent=2) + '\n')
@@ -1330,6 +1395,34 @@ class MainWindow(Adw.ApplicationWindow):
             self.toast('✓ Reset to recommended factory defaults.')
         except Exception as e:
             self.toast(f'Reset error: {e}')
+
+    def _run_setup_wizard(self, _btn) -> None:
+        def _worker():
+            ffctl_bin = '/usr/local/bin/ffctl' if os.path.exists('/usr/local/bin/ffctl') else None
+            msg = ''
+            try:
+                res = hardware_setup_scan(apply_recommended=True)
+                if not res.get('applied') and ffctl_bin:
+                    # Fallback via elevated apply if direct write lacked privileges
+                    subprocess.run([ffctl_bin, 'apply'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                rec = res['recommendations']
+                msg = f"✓ Setup complete: battery={rec['battery_preset']}, ac={rec['ac_preset']}"
+            except Exception as exc:
+                msg = f"Setup error: {exc}"
+            GLib.idle_add(lambda: (self.refresh_status(), self.toast(msg), GLib.SOURCE_REMOVE)[-1])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _export_bundle(self, _btn) -> None:
+        def _worker():
+            try:
+                res = create_diagnostics_bundle()
+                msg = f"✓ Saved bundle: {pathlib.Path(res['path']).name} ({res['size_bytes']} B)"
+            except Exception as exc:
+                msg = f"Bundle error: {exc}"
+            GLib.idle_add(lambda: (self.toast(msg), GLib.SOURCE_REMOVE)[-1])
+
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 def main():

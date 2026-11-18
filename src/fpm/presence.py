@@ -7,6 +7,7 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 
 import gi
 gi.require_version('Gio', '2.0')
@@ -30,7 +31,11 @@ DEFAULT = {
     'oled_screen_care': False,
     'oled_dim_inactive_sec': 0,
     'inhibit_on_media': True,
+    'tof_gesture_mode': 'off',
 }
+
+TOF_GESTURE_MODES = ('off', 'media_pause', 'privacy_dim', 'lock_screen')
+TELEMETRY_FILE = RUN_DIR / 'sensor_telemetry.json'
 
 
 
@@ -68,6 +73,8 @@ def load_config() -> dict:
         out['oled_dim_inactive_sec'] = max(0, min(300, int(out.get('oled_dim_inactive_sec', 0))))
     except Exception:
         out['oled_dim_inactive_sec'] = 0
+    gmode = str(out.get('tof_gesture_mode', 'off'))
+    out['tof_gesture_mode'] = gmode if gmode in TOF_GESTURE_MODES else 'off'
     return out
 
 
@@ -84,6 +91,9 @@ class PresenceController:
         self._promo_idle_60hz = False
         self._idle_watch_id = 0
         self._active_watch_id = 0
+        self._gesture_timer_id = 0
+        self._wave_enter_ts: float | None = None
+        self._wave_cooldown_until = 0.0
         try:
             RUN_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -126,6 +136,7 @@ class PresenceController:
         self._set_dimming(False)
         self._read_state()
         self._read_power_mode_once()
+        self._sync_gesture_timer()
         GLib.timeout_add_seconds(3, self._periodic_power_check)
 
     def _periodic_power_check(self) -> bool:
@@ -607,8 +618,74 @@ class PresenceController:
     def _apply_conf_now(self) -> bool:
         self.cfg = load_config()
         self._last_checked_mode = None
+        self._sync_gesture_timer()
         self._periodic_power_check()
         return GLib.SOURCE_REMOVE
+
+    def _sync_gesture_timer(self) -> None:
+        want = self.cfg.get('tof_gesture_mode', 'off') != 'off'
+        if want and not self._gesture_timer_id:
+            self._gesture_timer_id = GLib.timeout_add(250, self._poll_tof_gesture)
+        elif not want and self._gesture_timer_id:
+            GLib.source_remove(self._gesture_timer_id)
+            self._gesture_timer_id = 0
+            self._wave_enter_ts = None
+
+    def _toggle_mpris_playback(self) -> None:
+        try:
+            res = self.session.call_sync(
+                'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                'ListNames', None, None, Gio.DBusCallFlags.NONE, 500, None
+            )
+            for name in res.unpack()[0]:
+                if name.startswith('org.mpris.MediaPlayer2.'):
+                    try:
+                        self.session.call_sync(
+                            name, '/org/mpris/MediaPlayer2', 'org.mpris.MediaPlayer2.Player',
+                            'PlayPause', None, None, Gio.DBusCallFlags.NONE, 500, None
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def process_tof_wave_sample(self, distance_cm: float, now: float | None = None) -> str | None:
+        """Detect a 0.15s-2.0s hand wave (<= 18 cm) and dispatch the configured privacy/media action."""
+        mode = self.cfg.get('tof_gesture_mode', 'off')
+        if mode == 'off':
+            return None
+        ts = time.monotonic() if now is None else now
+        if 0 < distance_cm <= 18.0:
+            if self._wave_enter_ts is None and ts >= self._wave_cooldown_until:
+                self._wave_enter_ts = ts
+            return None
+        if distance_cm >= 22.0 and self._wave_enter_ts is not None:
+            dur = ts - self._wave_enter_ts
+            self._wave_enter_ts = None
+            if 0.15 <= dur <= 2.0:
+                self._wave_cooldown_until = ts + 4.0
+                if mode == 'media_pause':
+                    self._toggle_mpris_playback()
+                elif mode == 'lock_screen':
+                    self._lock()
+                elif mode == 'privacy_dim':
+                    self.is_dimmed = not self.is_dimmed
+                    self._set_dimming(self.is_dimmed)
+                return mode
+        return None
+
+    def _poll_tof_gesture(self) -> bool:
+        if self.cfg.get('tof_gesture_mode', 'off') == 'off':
+            self._gesture_timer_id = 0
+            return GLib.SOURCE_REMOVE
+        try:
+            if TELEMETRY_FILE.exists():
+                tel = json.loads(TELEMETRY_FILE.read_text())
+                if float(tel.get('last_packet_sec_ago', 99.0)) <= 2.0:
+                    self.process_tof_wave_sample(float(tel.get('distance_cm', 999.0)))
+        except Exception:
+            pass
+        return GLib.SOURCE_CONTINUE
 
     def _lock(self) -> None:
         subprocess.run(['/usr/bin/loginctl', 'lock-session'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -794,6 +871,9 @@ class PresenceController:
 
     def close(self) -> None:
         self._cancel_timer()
+        if getattr(self, '_gesture_timer_id', 0):
+            GLib.source_remove(self._gesture_timer_id)
+            self._gesture_timer_id = 0
         try:
             self.monitor.cancel()
         except Exception:

@@ -516,6 +516,121 @@ static int set_lenovo_feature(const char *feature, const char *val) {
     }
 }
 
+static void probe_charger_pd(char *label_out, size_t label_sz, double *watts_out, bool *slow_out) {
+    snprintf(label_out, label_sz, "%s", "AC Mains Adapter");
+    *watts_out = 0.0;
+    *slow_out = false;
+
+    bool found_usb = false;
+    double best_w = 0.0, best_v = 0.0, best_a = 0.0;
+    char best_proto[32] = "USB-PD";
+
+    DIR *pd = opendir("/sys/class/power_supply");
+    if (pd) {
+        struct dirent *de;
+        while ((de = readdir(pd)) != NULL) {
+            if (de->d_name[0] == '.' || strncmp(de->d_name, "BAT", 3) == 0) continue;
+            char ptype[32] = "", online_p[512], tp[512];
+            snprintf(tp, sizeof(tp), "/sys/class/power_supply/%s/type", de->d_name);
+            read_sysfs_string(tp, ptype, sizeof(ptype));
+            if (strncmp(ptype, "USB", 3) != 0 && strncmp(de->d_name, "ucsi", 4) != 0) continue;
+            snprintf(online_p, sizeof(online_p), "/sys/class/power_supply/%s/online", de->d_name);
+            if (asm_fast_read_sysfs_int(online_p) != 1) continue;
+
+            char vp[512], ip[512], pp[512], utp[512], ut[64] = "";
+            snprintf(vp, sizeof(vp), "/sys/class/power_supply/%s/voltage_max", de->d_name);
+            int64_t uv = asm_fast_read_sysfs_int(vp);
+            if (uv <= 0) {
+                snprintf(vp, sizeof(vp), "/sys/class/power_supply/%s/voltage_now", de->d_name);
+                uv = asm_fast_read_sysfs_int(vp);
+            }
+            snprintf(ip, sizeof(ip), "/sys/class/power_supply/%s/current_max", de->d_name);
+            int64_t ua = asm_fast_read_sysfs_int(ip);
+            if (ua <= 0) {
+                snprintf(ip, sizeof(ip), "/sys/class/power_supply/%s/current_now", de->d_name);
+                ua = asm_fast_read_sysfs_int(ip);
+            }
+            snprintf(pp, sizeof(pp), "/sys/class/power_supply/%s/power_now", de->d_name);
+            int64_t uw = asm_fast_read_sysfs_int(pp);
+            snprintf(utp, sizeof(utp), "/sys/class/power_supply/%s/usb_type", de->d_name);
+            read_sysfs_string(utp, ut, sizeof(ut));
+
+            double v = uv > 0 ? (double)uv / 1e6 : 0.0;
+            double a = ua > 0 ? (double)ua / 1e6 : 0.0;
+            double w = uw > 0 ? (double)uw / 1e6 : ((v > 0.0 && a > 0.0) ? v * a : 0.0);
+            const char *proto = strstr(ut, "[PD_PPS]") ? "USB-PD PPS" : (strstr(ut, "PD") ? "USB-PD" : "USB-C");
+            if (!found_usb || w > best_w) {
+                found_usb = true;
+                best_w = w; best_v = v; best_a = a;
+                snprintf(best_proto, sizeof(best_proto), "%s", proto);
+            }
+        }
+        closedir(pd);
+    }
+
+    if (found_usb) {
+        *watts_out = best_w;
+        *slow_out = (best_w > 0.0 && best_w < 45.0);
+        if (best_w > 0.0 && best_v > 0.0 && best_a > 0.0) {
+            snprintf(label_out, label_sz, "%s %.1fW (%.0fV/%.2fA)%s",
+                     best_proto, best_w, best_v, best_a, *slow_out ? " [Slow <45W]" : "");
+        } else if (best_w > 0.0) {
+            snprintf(label_out, label_sz, "%s %.1fW%s", best_proto, best_w, *slow_out ? " [Slow <45W]" : "");
+        } else {
+            snprintf(label_out, label_sz, "%s Sink (Negotiated)", best_proto);
+        }
+    }
+}
+
+static int count_awake_dgpus(char *summary_out, size_t summary_sz) {
+    if (summary_out && summary_sz > 0) summary_out[0] = '\0';
+    int total_gpu = 0, awake = 0;
+    DIR *pcid = opendir("/sys/bus/pci/devices");
+    if (!pcid) return 0;
+    struct dirent *de;
+    while ((de = readdir(pcid)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        char clp[320], cls[32] = "";
+        snprintf(clp, sizeof(clp), "/sys/bus/pci/devices/%s/class", de->d_name);
+        if (!read_sysfs_string(clp, cls, sizeof(cls))) continue;
+        if (strncmp(cls, "0x0300", 6) == 0 || strncmp(cls, "0x0302", 6) == 0) total_gpu++;
+    }
+    rewinddir(pcid);
+    while ((de = readdir(pcid)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        char clp[320], vnp[320], bvp[320], pmp[320], cls[32] = "", vnd[16] = "", bv[8] = "0", pm[32] = "";
+        snprintf(clp, sizeof(clp), "/sys/bus/pci/devices/%s/class", de->d_name);
+        if (!read_sysfs_string(clp, cls, sizeof(cls))) continue;
+        if (strncmp(cls, "0x0300", 6) != 0 && strncmp(cls, "0x0302", 6) != 0) continue;
+        snprintf(vnp, sizeof(vnp), "/sys/bus/pci/devices/%s/vendor", de->d_name);
+        read_sysfs_string(vnp, vnd, sizeof(vnd));
+        snprintf(bvp, sizeof(bvp), "/sys/bus/pci/devices/%s/boot_vga", de->d_name);
+        read_sysfs_string(bvp, bv, sizeof(bv));
+        bool is_dgpu = (strncmp(cls, "0x0302", 6) == 0) ||
+                       (strcmp(bv, "1") != 0 && (total_gpu > 1 || strcmp(vnd, "0x8086") != 0));
+        if (!is_dgpu) continue;
+        snprintf(pmp, sizeof(pmp), "/sys/bus/pci/devices/%s/power/runtime_status", de->d_name);
+        read_sysfs_string(pmp, pm, sizeof(pm));
+        if (strcmp(pm, "active") == 0) {
+            awake++;
+            if (summary_out && summary_sz > 0) {
+                char drv_l[320], drv_b[256];
+                snprintf(drv_l, sizeof(drv_l), "/sys/bus/pci/devices/%s/driver", de->d_name);
+                ssize_t rl = readlink(drv_l, drv_b, sizeof(drv_b) - 1);
+                const char *drv = "dgpu";
+                if (rl > 0) {
+                    drv_b[rl] = '\0';
+                    const char *sl = strrchr(drv_b, '/');
+                    drv = sl ? sl + 1 : drv_b;
+                }
+                snprintf(summary_out, summary_sz, "%.24s [%.20s]", de->d_name, drv);
+            }
+        }
+    }
+    closedir(pcid);
+    return awake;
+}
+
 static void print_status(bool as_json) {
     init_battery_path();
     bool bat = is_on_battery();
@@ -564,9 +679,24 @@ static void print_status(bool as_json) {
     SensorTelemetry tel;
     bool has_tel = read_sensor_telemetry(&tel);
 
+    char pd_label[96] = "AC Mains Adapter";
+    double pd_watts = 0.0;
+    bool pd_slow = false;
+    if (!bat) {
+        probe_charger_pd(pd_label, sizeof(pd_label), &pd_watts, &pd_slow);
+    } else {
+        snprintf(pd_label, sizeof(pd_label), "On Battery");
+    }
+    char dgpu_sum[64] = "";
+    int dgpu_awake = count_awake_dgpus(dgpu_sum, sizeof(dgpu_sum));
+
     if (as_json) {
         printf("{\n"
                "  \"power_source\": \"%s\",\n"
+               "  \"charger_pd\": \"%s\",\n"
+               "  \"charger_watts\": %.1f,\n"
+               "  \"slow_charger\": %s,\n"
+               "  \"dgpu_awake\": %d,\n"
                "  \"battery_percent\": %ld,\n"
                "  \"watts\": %.2f,\n"
                "  \"package_temp_c\": %d,\n"
@@ -581,6 +711,7 @@ static void print_status(bool as_json) {
                "  \"presence_state\": \"%s\"\n"
                "}\n",
                bat ? "battery" : "ac",
+               pd_label, pd_watts, pd_slow ? "true" : "false", dgpu_awake,
                (long)cap, watts, temp_c,
                onln, conf, p_max_ghz, pstate_drv, epp,
                (no_turbo == 0) ? "true" : (no_turbo == 1 ? "false" : "null"),
@@ -591,8 +722,15 @@ static void print_status(bool as_json) {
     printf(COLOR_BOLD "=== FF Power Manager Status (Native Engine) ===\n" COLOR_RESET);
     printf("  Power Source          : %s%s%s\n",
            bat ? COLOR_YELLOW : COLOR_GREEN,
-           bat ? "Battery (Discharging)" : "AC Power (Mains)",
+           bat ? "Battery (Discharging)" : pd_label,
            COLOR_RESET);
+    if (!bat && pd_slow) {
+        printf("  Charger Warning       : %sLow-wattage USB-PD (<45W) detected%s\n", COLOR_YELLOW, COLOR_RESET);
+    }
+    if (dgpu_awake > 0) {
+        printf("  dGPU Zombie Alert     : %s%d discrete GPU awake (%s)%s\n",
+               COLOR_RED, dgpu_awake, dgpu_sum[0] ? dgpu_sum : "D0", COLOR_RESET);
+    }
 
     if (cap >= 0) {
         printf("  Battery Level         : %ld%%\n", (long)cap);
@@ -923,8 +1061,11 @@ static void print_blame(bool as_json) {
     }
 
     size_t top_n = active_n < 6 ? active_n : 6;
+    char dgpu_sum[64] = "";
+    int dgpu_awake = count_awake_dgpus(dgpu_sum, sizeof(dgpu_sum));
     if (as_json) {
-        printf("{\n  \"sample_ms\": 250,\n  \"processes\": [");
+        printf("{\n  \"sample_ms\": 250,\n  \"dgpu_awake\": %d,\n  \"dgpu_info\": \"%s\",\n  \"processes\": [",
+               dgpu_awake, dgpu_sum);
         for (size_t i = 0; i < top_n; i++) {
             char esc[96];
             json_escape(procs[i].comm, esc, sizeof(esc));
@@ -951,6 +1092,9 @@ static void print_blame(bool as_json) {
     }
 
     printf(COLOR_BOLD "=== FF Power Manager Energy & Wakeup Blame (250ms Sample) ===\n" COLOR_RESET);
+    if (dgpu_awake > 0) {
+        printf(COLOR_RED "  [ALERT] Discrete GPU stuck active (D0): %s\n" COLOR_RESET, dgpu_sum[0] ? dgpu_sum : "dGPU");
+    }
     if (top_n == 0) {
         printf("  All user processes are deeply idle (< 1 wakeup/sec).\n");
     } else {
@@ -1071,8 +1215,32 @@ static void run_benchmark(void) {
            elapsed_sec * 1000.0, us_per_op);
 }
 
+static int run_python_tools(int argc, char *argv[]) {
+    if (access("/usr/local/lib/ff-power-manager/fpm/tools.py", F_OK) == 0) {
+        setenv("PYTHONPATH", "/usr/local/lib/ff-power-manager", 1);
+    } else if (access("src/fpm/tools.py", F_OK) == 0) {
+        setenv("PYTHONPATH", "src", 1);
+    }
+    char *args[32];
+    int idx = 0;
+    args[idx++] = "/usr/bin/python3";
+    args[idx++] = "-m";
+    args[idx++] = "fpm.tools";
+    for (int i = 1; i < argc && idx < 30; i++) {
+        args[idx++] = argv[i];
+    }
+    args[idx] = NULL;
+    execv("/usr/bin/python3", args);
+    perror("Failed to run fpm.tools");
+    return 1;
+}
+
 int main(int argc, char *argv[]) {
     bool as_json = has_json_flag(argc, argv);
+
+    if (argc >= 2 && (strcmp(argv[1], "setup") == 0 || strcmp(argv[1], "bundle") == 0)) {
+        return run_python_tools(argc, argv);
+    }
 
     if (argc < 2 || strcmp(argv[1], "status") == 0) {
         print_status(as_json);
@@ -1167,8 +1335,10 @@ int main(int argc, char *argv[]) {
                "Commands:\n"
                "  status [--json]       Display live hardware power, clocks and ToF presence telemetry\n"
                "  doctor [--json]       Run hardware residency, PCI PM, wakeup & conflict audit\n"
-               "  blame [--json]        Sample top wakeup/CPU processes and active PCI/USB blockers\n"
+               "  blame [--json]        Sample top wakeup/CPU processes, PCI/USB & dGPU blockers\n"
                "  sleep-report [--json] Show last s2idle/deep suspend drain duration, Wh and W\n"
+               "  setup [--apply]       Scan hardware capabilities and recommend/apply optimal profile\n"
+               "  bundle [path] [--json] Create sanitized .tar.gz diagnostics bundle for bug reports\n"
                "  apply [profile]       Apply profile (battery|ac|extreme_performance|cool_quiet|max_battery)\n"
                "  health [--json]       Display battery health, degradation, capacity and cycle analytics\n"
                "  lenovo                Display Lenovo ACPI hardware integration status\n"

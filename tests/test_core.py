@@ -1,3 +1,6 @@
+import os
+import pathlib
+import tempfile
 import unittest
 from unittest import mock
 
@@ -411,6 +414,113 @@ class ConfigTests(unittest.TestCase):
         chart_mock = mock.MagicMock()
         chart_mock._samples = [{'watts': 5.2, 'temp_c': 44}, {'watts': 11.4, 'temp_c': 53}, {'watts': 6.1, 'temp_c': 46}]
         cosmic_ui.TelemetrySparklineChart._on_draw(chart_mock, None, cr, 500, 150)
+
+    def test_dgpu_zombie_report_detects_awake_and_blockers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pci = pathlib.Path(tmp) / 'pci'
+            proc = pathlib.Path(tmp) / 'proc'
+            igpu = pci / '0000:00:02.0'
+            (igpu / 'power').mkdir(parents=True)
+            (igpu / 'class').write_text('0x030000\n')
+            (igpu / 'vendor').write_text('0x8086\n')
+            (igpu / 'device').write_text('0x7d51\n')
+            (igpu / 'boot_vga').write_text('1\n')
+            (igpu / 'power' / 'runtime_status').write_text('active\n')
+
+            dgpu = pci / '0000:01:00.0'
+            (dgpu / 'power').mkdir(parents=True)
+            (dgpu / 'drm' / 'renderD129').mkdir(parents=True)
+            (dgpu / 'class').write_text('0x030200\n')
+            (dgpu / 'vendor').write_text('0x10de\n')
+            (dgpu / 'device').write_text('0x28e0\n')
+            (dgpu / 'boot_vga').write_text('0\n')
+            (dgpu / 'power' / 'runtime_status').write_text('active\n')
+            (dgpu / 'power_state').write_text('D0\n')
+
+            p1 = proc / '4242'
+            (p1 / 'fd').mkdir(parents=True)
+            (p1 / 'comm').write_text('discord\n')
+            os.symlink('/dev/dri/renderD129', p1 / 'fd' / '3')
+
+            rep = core.dgpu_zombie_report(sysfs_pci=pci, proc_root=proc)
+            self.assertEqual(len(rep['dgpus']), 1)
+            self.assertEqual(rep['awake_count'], 1)
+            self.assertEqual(len(rep['blockers']), 1)
+            self.assertEqual(rep['blockers'][0]['name'], 'discord')
+
+    def test_charger_pd_report_detects_slow_and_fast_pd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            psy = pathlib.Path(tmp) / 'psy'
+            tc = pathlib.Path(tmp) / 'typec'
+            usb1 = psy / 'ucsi-source-psy-USBC000:001'
+            usb1.mkdir(parents=True)
+            (usb1 / 'type').write_text('USB\n')
+            (usb1 / 'online').write_text('1\n')
+            (usb1 / 'voltage_max').write_text('9000000\n')
+            (usb1 / 'current_max').write_text('2000000\n')
+            (usb1 / 'usb_type').write_text('C [PD] PD_PPS\n')
+
+            slow = core.charger_pd_report(psy_root=psy, typec_root=tc)
+            self.assertTrue(slow['pd_active'])
+            self.assertEqual(slow['watts'], 18.0)
+            self.assertTrue(slow['slow_charger'])
+
+            (usb1 / 'voltage_max').write_text('20000000\n')
+            (usb1 / 'current_max').write_text('3250000\n')
+            fast = core.charger_pd_report(psy_root=psy, typec_root=tc)
+            self.assertEqual(fast['watts'], 65.0)
+            self.assertFalse(fast['slow_charger'])
+
+    def test_tof_wave_gesture_privacy_and_media_cooldown(self):
+        from fpm.presence import PresenceController
+        ctrl = PresenceController.__new__(PresenceController)
+        ctrl.cfg = {'tof_gesture_mode': 'privacy_dim'}
+        ctrl.is_dimmed = False
+        ctrl._wave_enter_ts = None
+        ctrl._wave_cooldown_until = 0.0
+        ctrl._set_dimming = mock.MagicMock()
+        ctrl._lock = mock.MagicMock()
+        ctrl._toggle_mpris_playback = mock.MagicMock()
+
+        # Quick wave <=18 cm for 0.4s then exit >=22 cm triggers action
+        self.assertIsNone(ctrl.process_tof_wave_sample(12.0, now=10.0))
+        self.assertEqual(ctrl.process_tof_wave_sample(55.0, now=10.4), 'privacy_dim')
+        self.assertTrue(ctrl.is_dimmed)
+        ctrl._set_dimming.assert_called_once_with(True)
+
+        # Cooldown blocks immediate re-trigger
+        self.assertIsNone(ctrl.process_tof_wave_sample(10.0, now=11.0))
+        self.assertIsNone(ctrl.process_tof_wave_sample(50.0, now=11.3))
+
+        # Sustained leaning (>2.0s) after cooldown must NOT trigger wave gesture
+        self.assertIsNone(ctrl.process_tof_wave_sample(12.0, now=20.0))
+        self.assertIsNone(ctrl.process_tof_wave_sample(55.0, now=23.5))
+
+    def test_setup_scan_and_sanitized_diagnostics_bundle(self):
+        import tarfile
+        from fpm import tools
+        scrubbed = tools.sanitize_diagnostics_text('Host MAC 12:34:56:ab:cd:ef IP 192.168.1.44 OK')
+        self.assertIn('<MAC>', scrubbed)
+        self.assertIn('<IP>', scrubbed)
+        self.assertNotIn('192.168.1.44', scrubbed)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_tgz = pathlib.Path(tmp) / 'diag.tar.gz'
+            with mock.patch('fpm.tools.status_snapshot', return_value={
+                'cpu_topology': '16/16 Online', 'gpu_perf': '350 MHz', 'vaapi': 'iHD',
+                'charger_pd': {'label': 'AC Mains', 'slow_charger': False},
+                'dgpu': {'dgpus': [], 'awake_count': 0, 'blockers': []},
+                'lenovo': {'supported': True},
+            }), mock.patch('fpm.tools._safe_run_text', return_value='{"ok": true}'):
+                scan = tools.hardware_setup_scan(apply_recommended=False)
+                self.assertIn('recommendations', scan)
+                res = tools.create_diagnostics_bundle(out_tgz)
+                self.assertTrue(out_tgz.exists())
+                self.assertGreater(res['size_bytes'], 0)
+                with tarfile.open(out_tgz, 'r:gz') as tf:
+                    names = tf.getnames()
+                    self.assertIn('ff-power-diagnostics/summary.json', names)
+                    self.assertIn('ff-power-diagnostics/doctor.json', names)
 
 
 if __name__ == '__main__':

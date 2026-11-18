@@ -1244,6 +1244,248 @@ def set_lenovo_feature(name: str, value: bool | str | int) -> bool:
     return False
 
 
+def _read_int_or_none(path: pathlib.Path) -> int | None:
+    txt = read_text(path)
+    if txt is None:
+        return None
+    try:
+        return int(txt.strip())
+    except ValueError:
+        return None
+
+
+def _active_usb_protocol(usb_type_raw: str | None) -> str:
+    if not usb_type_raw:
+        return 'USB-C'
+    for tok in usb_type_raw.split():
+        if tok.startswith('[') and tok.endswith(']'):
+            inner = tok[1:-1]
+            if inner == 'PD_PPS':
+                return 'USB-PD PPS'
+            if inner == 'PD':
+                return 'USB-PD'
+            if inner == 'C':
+                return 'USB-C'
+            return f'USB-{inner}'
+    return 'USB-PD' if 'PD' in usb_type_raw else 'USB-C'
+
+
+def dgpu_zombie_report(
+    sysfs_pci: str | pathlib.Path = '/sys/bus/pci/devices',
+    proc_root: str | pathlib.Path = '/proc',
+) -> dict:
+    """Detect discrete GPUs held in D0/active state and blame processes holding their device nodes."""
+    pci_dir = pathlib.Path(sysfs_pci)
+    if not pci_dir.exists():
+        return {'dgpus': [], 'awake_count': 0, 'blockers': []}
+
+    candidates = []
+    for dev in sorted(pci_dir.iterdir()):
+        cls = read_text(dev / 'class') or ''
+        if not (cls.startswith('0x0300') or cls.startswith('0x0302')):
+            continue
+        vendor = read_text(dev / 'vendor') or ''
+        device = read_text(dev / 'device') or ''
+        boot_vga = read_text(dev / 'boot_vga') or '0'
+        try:
+            driver = (dev / 'driver').resolve().name
+        except Exception:
+            driver = 'unknown'
+        runtime_status = read_text(dev / 'power' / 'runtime_status') or 'unknown'
+        power_state = read_text(dev / 'power_state') or 'unknown'
+        drm_nodes: set[str] = set()
+        drm_dir = dev / 'drm'
+        if drm_dir.is_dir():
+            for child in drm_dir.iterdir():
+                if child.name.startswith(('renderD', 'card')):
+                    drm_nodes.add(f'/dev/dri/{child.name}')
+        candidates.append({
+            'slot': dev.name,
+            'class': cls,
+            'vendor': vendor,
+            'device': device,
+            'boot_vga': boot_vga,
+            'driver': driver,
+            'runtime_status': runtime_status,
+            'power_state': power_state,
+            'drm_nodes': drm_nodes,
+        })
+
+    dgpus = []
+    match_nodes: set[str] = set()
+    match_nvidia = False
+    for g in candidates:
+        is_dgpu = g['class'].startswith('0x0302') or (
+            g['boot_vga'] != '1' and (len(candidates) > 1 or g['vendor'] != '0x8086')
+        )
+        if not is_dgpu:
+            continue
+        awake = g['runtime_status'] == 'active' or g['power_state'] == 'D0'
+        if awake:
+            match_nodes.update(g['drm_nodes'])
+            if 'nvidia' in g['driver'].lower():
+                match_nvidia = True
+        dgpus.append({
+            'slot': g['slot'],
+            'vendor': g['vendor'],
+            'device': g['device'],
+            'driver': g['driver'],
+            'runtime_status': g['runtime_status'],
+            'power_state': g['power_state'],
+            'awake': awake,
+        })
+
+    blockers = []
+    if dgpus and any(g['awake'] for g in dgpus):
+        p_root = pathlib.Path(proc_root)
+        seen: set[tuple[int, str]] = set()
+        if p_root.is_dir():
+            for p_entry in p_root.iterdir():
+                if not p_entry.name.isdigit():
+                    continue
+                fd_dir = p_entry / 'fd'
+                if not fd_dir.is_dir():
+                    continue
+                try:
+                    fds = list(fd_dir.iterdir())
+                except OSError:
+                    continue
+                pid = int(p_entry.name)
+                for fd_entry in fds:
+                    try:
+                        target = os.readlink(fd_entry)
+                    except OSError:
+                        continue
+                    is_match = (target in match_nodes) or (match_nvidia and target.startswith('/dev/nvidia'))
+                    if not is_match or (pid, target) in seen:
+                        continue
+                    seen.add((pid, target))
+                    comm = read_text(p_entry / 'comm') or f'pid:{pid}'
+                    blockers.append({'pid': pid, 'name': comm.strip(), 'node': target})
+                    if len(blockers) >= 12:
+                        break
+                if len(blockers) >= 12:
+                    break
+
+    return {
+        'dgpus': dgpus,
+        'awake_count': sum(1 for g in dgpus if g['awake']),
+        'blockers': blockers,
+    }
+
+
+def charger_pd_report(
+    psy_root: str | pathlib.Path = '/sys/class/power_supply',
+    typec_root: str | pathlib.Path = '/sys/class/typec',
+) -> dict:
+    """Inspect AC mains and USB-C Power Delivery supplies for negotiated V/A/W and slow-charger warnings."""
+    psy_dir = pathlib.Path(psy_root)
+    usb_supplies = []
+    mains_online = False
+
+    if psy_dir.is_dir():
+        for entry in sorted(psy_dir.iterdir()):
+            if entry.name.startswith('BAT'):
+                continue
+            ptype = (read_text(entry / 'type') or '').strip()
+            if ptype == 'Battery':
+                continue
+            online = (read_text(entry / 'online') or '0').strip() == '1'
+            if ptype == 'Mains':
+                if online:
+                    mains_online = True
+                continue
+            if not (ptype.startswith('USB') or entry.name.startswith('ucsi')):
+                continue
+            if not online:
+                continue
+            vmax = _read_int_or_none(entry / 'voltage_max') or 0
+            vnow = _read_int_or_none(entry / 'voltage_now') or 0
+            imax = _read_int_or_none(entry / 'current_max') or 0
+            inow = _read_int_or_none(entry / 'current_now') or 0
+            pnow = _read_int_or_none(entry / 'power_now') or 0
+            volts_uv = vmax if vmax > 0 else vnow
+            amps_ua = imax if imax > 0 else inow
+            volts = round(volts_uv / 1_000_000.0, 2) if volts_uv > 0 else None
+            amps = round(amps_ua / 1_000_000.0, 2) if amps_ua > 0 else None
+            watts = None
+            if pnow > 0:
+                watts = round(pnow / 1_000_000.0, 1)
+            elif volts is not None and amps is not None:
+                watts = round(volts * amps, 1)
+            proto = _active_usb_protocol(read_text(entry / 'usb_type'))
+            usb_supplies.append({
+                'name': entry.name,
+                'protocol': proto,
+                'volts': volts,
+                'amps': amps,
+                'watts': watts,
+                'manufacturer': read_text(entry / 'manufacturer'),
+                'model': read_text(entry / 'model_name'),
+            })
+
+    typec_pd_sink = False
+    tc_dir = pathlib.Path(typec_root)
+    if tc_dir.is_dir():
+        for port in sorted(tc_dir.glob('port*')):
+            if '-' in port.name:
+                continue
+            role = read_text(port / 'power_role') or ''
+            opmode = read_text(port / 'power_operation_mode') or ''
+            if '[sink]' in role and 'usb_power_delivery' in opmode:
+                typec_pd_sink = True
+                break
+
+    if usb_supplies:
+        best = max(usb_supplies, key=lambda x: x['watts'] or 0.0)
+        watts = best['watts']
+        slow = watts is not None and 0.0 < watts < 45.0
+        if watts is not None and best['volts'] is not None and best['amps'] is not None:
+            label = f"{best['protocol']} • {watts:.1f}W ({best['volts']:.0f}V/{best['amps']:.2f}A)"
+        elif watts is not None:
+            label = f"{best['protocol']} • {watts:.1f}W"
+        else:
+            label = f"{best['protocol']} Sink (Negotiated)"
+        if slow:
+            label = f"{label} [Slow <45W]"
+        return {
+            'source': 'usb_pd',
+            'pd_active': 'PD' in best['protocol'] or typec_pd_sink,
+            'protocol': best['protocol'],
+            'volts': best['volts'],
+            'amps': best['amps'],
+            'watts': watts,
+            'slow_charger': slow,
+            'port': best['name'],
+            'label': label,
+        }
+
+    if mains_online:
+        return {
+            'source': 'usb_pd' if typec_pd_sink else 'ac_mains',
+            'pd_active': typec_pd_sink,
+            'protocol': 'USB-PD' if typec_pd_sink else 'AC Mains',
+            'volts': None,
+            'amps': None,
+            'watts': None,
+            'slow_charger': False,
+            'port': 'ACAD',
+            'label': 'USB-PD Sink Active' if typec_pd_sink else 'AC Mains Adapter',
+        }
+
+    return {
+        'source': 'battery',
+        'pd_active': False,
+        'protocol': 'Battery',
+        'volts': None,
+        'amps': None,
+        'watts': None,
+        'slow_charger': False,
+        'port': None,
+        'label': 'On Battery',
+    }
+
+
 def cpu_topology_current() -> str:
     online_raw = read_text('/sys/devices/system/cpu/online') or ''
     online_ids = _parse_cpu_list(online_raw)
@@ -1289,6 +1531,8 @@ def status_snapshot() -> dict:
         'presence_state': read_text(STATE_FILE),
         'lenovo': get_lenovo_features(),
         'battery_health': battery_health_report(),
+        'charger_pd': charger_pd_report(),
+        'dgpu': dgpu_zombie_report(),
         'config': load_config(),
         'sensor': load_sensor_config(),
     }
