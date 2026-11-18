@@ -2,10 +2,10 @@
 Type=Application
 Name=FF Power Manager
 GenericName=Laptop Power Manager
-Comment=Power profiles and Lenovo ToF OLED presence automation
+Comment=Linux power profiles, Adaptive Refresh, ToF radar & hardware residency monitor
 Exec=ff-power-manager
-Icon=preferences-system-power
+Icon=ff-power-manager
 Terminal=false
-Categories=Settings;System;
-Keywords=battery;power;lenovo;oled;presence;tof;fedora;
+Categories=Settings;System;Monitor;
+Keywords=battery;power;lenovo;oled;presence;tof;fedora;ubuntu;
 StartupNotify=true

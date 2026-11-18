@@ -7,6 +7,8 @@ const ByteArray = imports.byteArray;
 
 const PRESENCE_CONF = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'ff-power-manager', 'presence.json']);
 const ONESHOT_100_FLAG = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'ff-power-manager', 'oneshot_100']);
+const FOCUSED_WIN_FILE = '/run/ff-power-manager/focused.json';
+const LAST_SLEEP_FILE = '/var/lib/ff-power-manager/last_sleep.json';
 // Even-pixel offsets align cleanly on 200% HiDPI scaling without subpixel blur
 const OLED_OFFSETS_X = [-2, 0, 2];
 
@@ -326,6 +328,12 @@ class FFPowerIndicator extends PanelMenu.Button {
 
         this._buildMenu();
         this._updateTelemetry();
+        this._onFocusChanged();
+        try {
+            this._focusSig = global.display.connect('notify::focus-window', () => this._onFocusChanged());
+        } catch (_) {
+            this._focusSig = 0;
+        }
 
         this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
             this._updateTelemetry();
@@ -335,6 +343,16 @@ class FFPowerIndicator extends PanelMenu.Button {
             }
             return GLib.SOURCE_CONTINUE;
         });
+    }
+
+    _onFocusChanged() {
+        try {
+            const win = global.display.focus_window;
+            const pid = win ? win.get_pid() : 0;
+            const wmClass = win ? (win.get_wm_class() || '') : '';
+            const payload = JSON.stringify({ pid, wm_class: wmClass, ts: Math.floor(Date.now() / 1000) }) + '\n';
+            GLib.file_set_contents(FOCUSED_WIN_FILE, payload);
+        } catch (_) {}
     }
 
     _applyOledPixelShift() {
@@ -578,15 +596,25 @@ class FFPowerIndicator extends PanelMenu.Button {
 
         if (this._savingsItem) {
             let savRaw = readFile('/run/ff-power-manager/savings.json');
+            let sleepRaw = readFile(LAST_SLEEP_FILE);
+            let sleepSuffix = '';
+            if (sleepRaw) {
+                try {
+                    const sl = JSON.parse(sleepRaw);
+                    if (typeof sl.avg_watts === 'number') {
+                        sleepSuffix = ` • Uyku: ${sl.avg_watts.toFixed(2)}W`;
+                    }
+                } catch (_) {}
+            }
             if (savRaw) {
                 try {
                     const sav = JSON.parse(savRaw);
                     const offMin = Math.round((sav.screen_off_sec || 0) / 60);
                     const wh = ((sav.wh_saved || 0)).toFixed(2);
-                    this._savingsItem.label.text = `Bugün Tasarruf: ${offMin} dk ekran koruması • ~${wh} Wh kazanım`;
+                    this._savingsItem.label.text = `Bugün: ${offMin} dk ekran • ~${wh} Wh${sleepSuffix}`;
                 } catch (_) {}
             } else {
-                this._savingsItem.label.text = 'Bugün Tasarruf: Akıllı Yenileme & ToF aktif';
+                this._savingsItem.label.text = `Akıllı Yenileme & ToF aktif${sleepSuffix}`;
             }
         }
 
@@ -602,6 +630,12 @@ class FFPowerIndicator extends PanelMenu.Button {
     }
 
     destroy() {
+        if (this._focusSig) {
+            try {
+                global.display.disconnect(this._focusSig);
+            } catch (_) {}
+            this._focusSig = 0;
+        }
         if (this._timerId) {
             GLib.source_remove(this._timerId);
             this._timerId = 0;

@@ -735,6 +735,287 @@ static void print_doctor(bool as_json) {
     printf("--------------------------------------------------\n");
 }
 
+static void json_escape(const char *src, char *dst, size_t dst_sz) {
+    size_t j = 0;
+    for (size_t i = 0; src && src[i] != '\0' && j + 2 < dst_sz; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"' || c == '\\') {
+            if (j + 2 >= dst_sz) break;
+            dst[j++] = '\\';
+            dst[j++] = (char)c;
+        } else if (c >= 0x20) {
+            dst[j++] = (char)c;
+        }
+    }
+    dst[j] = '\0';
+}
+
+typedef struct {
+    pid_t pid;
+    char comm[32];
+    uint64_t ticks0;
+    uint64_t csw0;
+    double cpu_pct;
+    double csw_rate;
+    double score;
+} BlameProc;
+
+static bool read_proc_sample(pid_t pid, char *comm_out, size_t comm_sz, uint64_t *ticks_out, uint64_t *csw_out) {
+    char stat_path[128], buf[1024];
+    snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", (int)pid);
+    int fd = open(stat_path, O_RDONLY);
+    if (fd < 0) return false;
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return false;
+    buf[n] = '\0';
+
+    char *lp = strchr(buf, '(');
+    char *rp = strrchr(buf, ')');
+    if (!lp || !rp || rp <= lp) return false;
+    if (comm_out && comm_sz > 0) {
+        size_t len = (size_t)(rp - lp - 1);
+        if (len >= comm_sz) len = comm_sz - 1;
+        memcpy(comm_out, lp + 1, len);
+        comm_out[len] = '\0';
+    }
+
+    unsigned long utime = 0, stime = 0;
+    char *p = rp + 2;
+    /* Fields after ')': 3=state ... 14=utime (index 11 after state), 15=stime (index 12) */
+    int field = 0;
+    while (*p && field < 12) {
+        if (*p == ' ') field++;
+        p++;
+    }
+    if (field == 11) {
+        sscanf(p, "%lu %lu", &utime, &stime);
+    } else {
+        /* Re-scan cleanly from rp+2 using strtok_r style spaces */
+        char *q = rp + 2;
+        for (int idx = 3; idx <= 15 && *q; idx++) {
+            while (*q == ' ') q++;
+            if (idx == 14) utime = strtoul(q, &q, 10);
+            else if (idx == 15) stime = strtoul(q, &q, 10);
+            else {
+                while (*q && *q != ' ') q++;
+            }
+        }
+    }
+    *ticks_out = (uint64_t)utime + (uint64_t)stime;
+
+    uint64_t vcsw = 0, nvcsw = 0;
+    char st_path[128], st_buf[2048];
+    snprintf(st_path, sizeof(st_path), "/proc/%d/status", (int)pid);
+    fd = open(st_path, O_RDONLY);
+    if (fd >= 0) {
+        n = read(fd, st_buf, sizeof(st_buf) - 1);
+        close(fd);
+        if (n > 0) {
+            st_buf[n] = '\0';
+            char *vp = strstr(st_buf, "voluntary_ctxt_switches:");
+            if (vp) sscanf(vp, "voluntary_ctxt_switches:%llu", (unsigned long long *)&vcsw);
+            char *nvp = strstr(st_buf, "nonvoluntary_ctxt_switches:");
+            if (nvp) sscanf(nvp, "nonvoluntary_ctxt_switches:%llu", (unsigned long long *)&nvcsw);
+        }
+    }
+    *csw_out = vcsw + nvcsw;
+    return true;
+}
+
+static int cmp_blame_desc(const void *a, const void *b) {
+    const BlameProc *pa = (const BlameProc *)a;
+    const BlameProc *pb = (const BlameProc *)b;
+    if (pb->score > pa->score) return 1;
+    if (pb->score < pa->score) return -1;
+    return 0;
+}
+
+static void print_blame(bool as_json) {
+    const size_t MAX_PROCS = 1024;
+    BlameProc *procs = calloc(MAX_PROCS, sizeof(BlameProc));
+    if (!procs) return;
+    size_t count = 0;
+
+    DIR *pd = opendir("/proc");
+    if (pd) {
+        struct dirent *de;
+        while ((de = readdir(pd)) != NULL && count < MAX_PROCS) {
+            if (de->d_name[0] < '0' || de->d_name[0] > '9') continue;
+            pid_t pid = (pid_t)atoi(de->d_name);
+            if (pid <= 1 || pid == getpid()) continue;
+            if (read_proc_sample(pid, procs[count].comm, sizeof(procs[count].comm),
+                                 &procs[count].ticks0, &procs[count].csw0)) {
+                procs[count].pid = pid;
+                count++;
+            }
+        }
+        closedir(pd);
+    }
+
+    const double sample_sec = 0.25;
+    usleep(250000);
+    long hz = sysconf(_SC_CLK_TCK);
+    if (hz <= 0) hz = 100;
+
+    size_t active_n = 0;
+    for (size_t i = 0; i < count; i++) {
+        uint64_t t1 = 0, c1 = 0;
+        if (!read_proc_sample(procs[i].pid, NULL, 0, &t1, &c1)) continue;
+        uint64_t dt = (t1 >= procs[i].ticks0) ? (t1 - procs[i].ticks0) : 0;
+        uint64_t dc = (c1 >= procs[i].csw0) ? (c1 - procs[i].csw0) : 0;
+        double cpu = ((double)dt / (double)hz) / sample_sec * 100.0;
+        double csw_s = (double)dc / sample_sec;
+        if (cpu <= 0.01 && csw_s < 1.0) continue;
+        procs[active_n] = procs[i];
+        procs[active_n].cpu_pct = cpu;
+        procs[active_n].csw_rate = csw_s;
+        procs[active_n].score = cpu * 4.0 + csw_s * 0.05;
+        active_n++;
+    }
+    qsort(procs, active_n, sizeof(BlameProc), cmp_blame_desc);
+
+    typedef struct { char id[64]; char label[128]; } BlockerDev;
+    BlockerDev pci_active[16], usb_active[16];
+    size_t n_pci = 0, n_usb = 0;
+
+    DIR *pcid = opendir("/sys/bus/pci/devices");
+    if (pcid) {
+        struct dirent *de;
+        while ((de = readdir(pcid)) != NULL && n_pci < 16) {
+            if (de->d_name[0] == '.') continue;
+            char stp[512], clp[512], drv_link[512], drv_buf[512], st[32] = "", cls[32] = "";
+            snprintf(stp, sizeof(stp), "/sys/bus/pci/devices/%s/power/runtime_status", de->d_name);
+            if (!read_sysfs_string(stp, st, sizeof(st)) || strcmp(st, "active") != 0) continue;
+            snprintf(clp, sizeof(clp), "/sys/bus/pci/devices/%s/class", de->d_name);
+            read_sysfs_string(clp, cls, sizeof(cls));
+            if (strncmp(cls, "0x06", 4) == 0) continue; /* skip host/PCI bridges */
+            snprintf(drv_link, sizeof(drv_link), "/sys/bus/pci/devices/%s/driver", de->d_name);
+            ssize_t rl = readlink(drv_link, drv_buf, sizeof(drv_buf) - 1);
+            const char *drv = "pci";
+            if (rl > 0) {
+                drv_buf[rl] = '\0';
+                const char *sl = strrchr(drv_buf, '/');
+                drv = sl ? sl + 1 : drv_buf;
+            }
+            snprintf(pci_active[n_pci].id, sizeof(pci_active[n_pci].id), "%.63s", de->d_name);
+            snprintf(pci_active[n_pci].label, sizeof(pci_active[n_pci].label), "%.63s (%.24s)", drv, cls);
+            n_pci++;
+        }
+        closedir(pcid);
+    }
+
+    DIR *usbd = opendir("/sys/bus/usb/devices");
+    if (usbd) {
+        struct dirent *de;
+        while ((de = readdir(usbd)) != NULL && n_usb < 16) {
+            if (de->d_name[0] == '.' || strncmp(de->d_name, "usb", 3) == 0 || strchr(de->d_name, ':')) continue;
+            char stp[512], prp[512], st[32] = "", prod[128] = "";
+            snprintf(stp, sizeof(stp), "/sys/bus/usb/devices/%s/power/runtime_status", de->d_name);
+            if (!read_sysfs_string(stp, st, sizeof(st)) || strcmp(st, "active") != 0) continue;
+            snprintf(prp, sizeof(prp), "/sys/bus/usb/devices/%s/product", de->d_name);
+            if (!read_sysfs_string(prp, prod, sizeof(prod))) strcpy(prod, "USB Device");
+            snprintf(usb_active[n_usb].id, sizeof(usb_active[n_usb].id), "%.63s", de->d_name);
+            snprintf(usb_active[n_usb].label, sizeof(usb_active[n_usb].label), "%.120s", prod);
+            n_usb++;
+        }
+        closedir(usbd);
+    }
+
+    size_t top_n = active_n < 6 ? active_n : 6;
+    if (as_json) {
+        printf("{\n  \"sample_ms\": 250,\n  \"processes\": [");
+        for (size_t i = 0; i < top_n; i++) {
+            char esc[96];
+            json_escape(procs[i].comm, esc, sizeof(esc));
+            printf("%s\n    {\"pid\": %d, \"name\": \"%s\", \"cpu_pct\": %.1f, \"wakeups_per_sec\": %.1f}",
+                   i == 0 ? "" : ",", (int)procs[i].pid, esc, procs[i].cpu_pct, procs[i].csw_rate);
+        }
+        printf("\n  ],\n  \"active_pci\": [");
+        for (size_t i = 0; i < n_pci; i++) {
+            char esc[256];
+            json_escape(pci_active[i].label, esc, sizeof(esc));
+            printf("%s\n    {\"slot\": \"%s\", \"driver\": \"%s\"}",
+                   i == 0 ? "" : ",", pci_active[i].id, esc);
+        }
+        printf("\n  ],\n  \"active_usb\": [");
+        for (size_t i = 0; i < n_usb; i++) {
+            char esc[256];
+            json_escape(usb_active[i].label, esc, sizeof(esc));
+            printf("%s\n    {\"port\": \"%s\", \"product\": \"%s\"}",
+                   i == 0 ? "" : ",", usb_active[i].id, esc);
+        }
+        printf("\n  ]\n}\n");
+        free(procs);
+        return;
+    }
+
+    printf(COLOR_BOLD "=== FF Power Manager Energy & Wakeup Blame (250ms Sample) ===\n" COLOR_RESET);
+    if (top_n == 0) {
+        printf("  All user processes are deeply idle (< 1 wakeup/sec).\n");
+    } else {
+        printf("  %-7s %-20s %8s %14s\n", "PID", "PROCESS", "CPU %", "WAKEUPS / SEC");
+        for (size_t i = 0; i < top_n; i++) {
+            printf("  %-7d %-20s %7.1f%% %11.1f/s\n",
+                   (int)procs[i].pid, procs[i].comm, procs[i].cpu_pct, procs[i].csw_rate);
+        }
+    }
+    printf("\n" COLOR_BOLD "  Active Hardware Keeping Bus Awake (Not Runtime Suspended):\n" COLOR_RESET);
+    printf("    PCI (%zu):", n_pci);
+    for (size_t i = 0; i < n_pci && i < 6; i++) printf(" %s[%s]", pci_active[i].id, pci_active[i].label);
+    printf("\n    USB (%zu):", n_usb);
+    for (size_t i = 0; i < n_usb && i < 6; i++) printf(" %s[%s]", usb_active[i].id, usb_active[i].label);
+    printf("\n--------------------------------------------------\n");
+    free(procs);
+}
+
+static void print_sleep_report(bool as_json) {
+    const char *path = "/var/lib/ff-power-manager/last_sleep.json";
+    char buf[1024] = "";
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        if (as_json) {
+            printf("{\"available\": false, \"message\": \"No recorded suspend cycle yet\"}\n");
+        } else {
+            printf(COLOR_BOLD "=== FF Power Manager Suspend Drain Report ===\n" COLOR_RESET);
+            printf("  No completed suspend/resume cycle recorded yet.\n");
+            printf("  Report is automatically captured on next suspend by ff-sleep-guard.\n");
+            printf("--------------------------------------------------\n");
+        }
+        return;
+    }
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+
+    if (as_json) {
+        printf("%s\n", buf);
+        return;
+    }
+
+    int dur = 0, p0 = 0, p1 = 0, plost = 0;
+    double wh = 0.0, avg_w = 0.0, phr = 0.0;
+    char mode[32] = "s2idle";
+    char *p;
+    if ((p = strstr(buf, "\"duration_sec\":"))) sscanf(p, "\"duration_sec\":%d", &dur);
+    if ((p = strstr(buf, "\"wh_used\":"))) sscanf(p, "\"wh_used\":%lf", &wh);
+    if ((p = strstr(buf, "\"avg_watts\":"))) sscanf(p, "\"avg_watts\":%lf", &avg_w);
+    if ((p = strstr(buf, "\"pct_start\":"))) sscanf(p, "\"pct_start\":%d", &p0);
+    if ((p = strstr(buf, "\"pct_end\":"))) sscanf(p, "\"pct_end\":%d", &p1);
+    if ((p = strstr(buf, "\"pct_lost\":"))) sscanf(p, "\"pct_lost\":%d", &plost);
+    if ((p = strstr(buf, "\"pct_per_hour\":"))) sscanf(p, "\"pct_per_hour\":%lf", &phr);
+    if ((p = strstr(buf, "\"sleep_mode\":"))) sscanf(p, "\"sleep_mode\":%*[^\"]\"%31[^\"]", mode);
+
+    int hrs = dur / 3600, mins = (dur % 3600) / 60;
+    printf(COLOR_BOLD "=== FF Power Manager Last Suspend Drain Report ===\n" COLOR_RESET);
+    printf("  Sleep State       : %s\n", mode);
+    printf("  Sleep Duration    : %dh %02dm (%d s)\n", hrs, mins, dur);
+    printf("  Battery Change    : %d%% -> %d%% (-%d%%)\n", p0, p1, plost);
+    printf("  Energy Consumed   : %.3f Wh (Avg Standby Draw: %s%.2f W • %.2f%%/hr%s)\n",
+           wh, avg_w <= 0.6 ? COLOR_GREEN : COLOR_YELLOW, avg_w, phr, COLOR_RESET);
+    printf("--------------------------------------------------\n");
+}
+
 static int run_apply(const char *profile) {
     printf(COLOR_BOLD "Applying power profile '%s'...\n" COLOR_RESET, (profile && profile[0]) ? profile : "auto");
     const char *parg = (profile && strlen(profile) > 0) ? profile : NULL;
@@ -800,6 +1081,16 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "doctor") == 0 || strcmp(argv[1], "audit") == 0) {
         print_doctor(as_json);
+        return 0;
+    }
+
+    if (strcmp(argv[1], "blame") == 0 || strcmp(argv[1], "top") == 0) {
+        print_blame(as_json);
+        return 0;
+    }
+
+    if (strcmp(argv[1], "sleep-report") == 0 || strcmp(argv[1], "sleep") == 0) {
+        print_sleep_report(as_json);
         return 0;
     }
 
@@ -876,6 +1167,8 @@ int main(int argc, char *argv[]) {
                "Commands:\n"
                "  status [--json]       Display live hardware power, clocks and ToF presence telemetry\n"
                "  doctor [--json]       Run hardware residency, PCI PM, wakeup & conflict audit\n"
+               "  blame [--json]        Sample top wakeup/CPU processes and active PCI/USB blockers\n"
+               "  sleep-report [--json] Show last s2idle/deep suspend drain duration, Wh and W\n"
                "  apply [profile]       Apply profile (battery|ac|extreme_performance|cool_quiet|max_battery)\n"
                "  health [--json]       Display battery health, degradation, capacity and cycle analytics\n"
                "  lenovo                Display Lenovo ACPI hardware integration status\n"

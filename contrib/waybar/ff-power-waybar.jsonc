@@ -1,0 +1,9 @@
+{
+  "custom/ff-power": {
+    "exec": "ffctl status --json | python3 -c \"import json,sys; d=json.load(sys.stdin); src='AC' if d['power_source']=='ac' else 'BAT'; print(json.dumps({'text': f'⚡ {d[\\\"watts\\\"]:.1f}W • {d[\\\"battery_percent\\\"]}% • {d[\\\"package_temp_c\\\"]}°C', 'tooltip': f'{src} | EPP: {d[\\\"epp\\\"]} | ASPM: {d[\\\"pcie_aspm\\\"]} | {d[\\\"refresh_rate\\\"]}', 'class': d['power_source']}))\"",
+    "return-type": "json",
+    "interval": 2,
+    "on-click": "ff-power-manager",
+    "on-click-right": "ffctl apply"
+  }
+}

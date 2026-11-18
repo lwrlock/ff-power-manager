@@ -38,16 +38,16 @@
         "@type": "SoftwareApplication",
         "name": "FF Power Manager",
         "alternateName": "ffctl",
-        "softwareVersion": "2.1.0",
-        "operatingSystem": "Linux (Ubuntu, Debian, Fedora, GNOME Wayland)",
+        "softwareVersion": "2.2.0",
+        "operatingSystem": "Linux (Ubuntu, Debian, Fedora — GNOME, Hyprland, Plasma)",
         "applicationCategory": "UtilitiesApplication",
         "applicationSubCategory": "Power Management",
-        "description": "Hybrid C/x86_64 Assembly + Python/GTK4 Linux laptop power manager with universal Intel/AMD topology discovery, ffctl doctor hardware residency diagnostics, battery-only Adaptive Refresh Rate, ToF presence radar, and s2idle wakeup guard.",
+        "description": "Hybrid C/x86_64 Assembly + Python/GTK4 Linux laptop power manager with universal Intel/AMD discovery, ffctl doctor residency audit, ffctl blame wakeup profiler, ffctl sleep-report, Multi-DE Adaptive Refresh, ToF presence radar, and Cosmic GTK4 UI.",
         "license": "https://opensource.org/licenses/MIT",
         "url": "https://lwrlock.github.io/ff-power-manager/",
         "downloadUrl": "https://github.com/lwrlock/ff-power-manager/releases/latest",
         "codeRepository": "https://github.com/lwrlock/ff-power-manager",
-        "releaseNotes": "https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0",
+        "releaseNotes": "https://github.com/lwrlock/ff-power-manager/releases/tag/v2.2.0",
         "softwareRequirements": "Linux kernel 5.19+, GNOME Shell 44+, Ubuntu/Debian/Fedora",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "author": {
@@ -263,25 +263,25 @@
     <header>
       <div class="badge-bar">
         <span class="badge">Ubuntu &bull; Debian &bull; Fedora</span>
-        <span class="badge">GNOME / Wayland</span>
+        <span class="badge">GNOME &bull; Hyprland &bull; Plasma</span>
         <span class="badge">C &amp; x86_64 ASM Engine</span>
         <span class="badge green">&#x26A1; Universal Hardware Discovery</span>
         <span class="badge ai">&#x1F916; AI-Assisted Engineering</span>
-        <span class="badge">v2.1.0</span>
+        <span class="badge">v2.2.0</span>
       </div>
       <h1>FF Power Manager</h1>
       <p class="subtitle">
-        Low-overhead Linux power management, battery-only Adaptive Refresh (60&ndash;165Hz), <code>ffctl doctor</code> hardware residency diagnostics, ST VL53L1 ToF presence automation, and <code>s2idle</code> sleep-drain protection.
+        Low-overhead Linux power management, Multi-DE Adaptive Refresh (60&ndash;165Hz), <code>ffctl blame</code> wakeup profiler, <code>ffctl doctor</code> residency audit, <code>s2idle</code> sleep-drain analytics, and a Cosmic Space GTK4 UI.
       </p>
 
       <div class="cta-group">
         <a href="https://github.com/lwrlock/ff-power-manager" class="btn btn-primary">&#x1F517; View on GitHub</a>
-        <a href="https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0" class="btn btn-outline">&#x1F4E6; Latest Release (v2.1.0)</a>
+        <a href="https://github.com/lwrlock/ff-power-manager/releases/tag/v2.2.0" class="btn btn-outline">&#x1F4E6; Latest Release (v2.2.0)</a>
       </div>
 
       <div class="terminal-box">
         <span class="comment"># Install via Debian/Ubuntu .deb package or build from source</span><br>
-        $ sudo apt install ./ff-power-manager_2.1.0_amd64.deb<br>
+        $ sudo apt install ./ff-power-manager_2.2.0_amd64.deb<br>
         <span class="comment"># Or source install (Ubuntu / Debian / Fedora):</span><br>
         $ git clone https://github.com/lwrlock/ff-power-manager.git &amp;&amp; cd ff-power-manager &amp;&amp; sudo ./install.sh
       </div>
@@ -298,8 +298,14 @@
 
         <div class="card">
           <div class="card-icon">&#x1F50D;</div>
-          <h3>Hardware Residency Audit (<code>ffctl doctor</code>)</h3>
-          <p>Verifies <code>[s2idle]</code>/<code>[deep]</code> sleep hooks, armed ACPI wakeups, PCI Runtime PM ratios, P-state/EPP drivers, and conflicting daemons in &lt;2ms with <code>--json</code> export.</p>
+          <h3>Wakeup Blame &amp; Residency Audit</h3>
+          <p><code>ffctl blame --json</code> ranks top CPU/wakeup offender processes &amp; active PCI/USB hardware in 250ms, while <code>ffctl doctor</code> verifies <code>s2idle</code> hooks and PCI PM ratios.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">&#x1F319;</div>
+          <h3>Suspend Drain Analytics &amp; Guard</h3>
+          <p><code>ff-sleep-guard</code> disables spurious USB/Thunderbolt wakeups and computes exact sleep duration, <code>Wh</code> used, and standby wattage via <code>ffctl sleep-report</code>.</p>
         </div>
 
         <div class="card">
@@ -384,6 +390,16 @@
             <td><code>ffctl doctor [--json]</code></td>
             <td>Inspect sleep guard hook, ACPI wakeups, PCI PM ratios, and daemon conflicts.</td>
             <td>&lt; 2 ms Hardware Audit</td>
+          </tr>
+          <tr>
+            <td><code>ffctl blame [--json]</code></td>
+            <td>Rank top wakeup/CPU offending processes &amp; active PCI/USB hardware blockers.</td>
+            <td>250 ms Live Profiler</td>
+          </tr>
+          <tr>
+            <td><code>ffctl sleep-report [--json]</code></td>
+            <td>Inspect last s2idle/deep suspend duration, Wh consumed, and avg standby W.</td>
+            <td>ff-sleep-guard Telemetry</td>
           </tr>
           <tr>
             <td><code>ffctl health [--json]</code></td>

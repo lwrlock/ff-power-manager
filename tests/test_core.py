@@ -368,6 +368,52 @@ class ConfigTests(unittest.TestCase):
         doc = json.loads(subprocess.check_output([str(ffctl_path), 'doctor', '--json'], text=True))
         self.assertIn('pci_devices_total', doc)
         self.assertIn('scaling_driver', doc)
+        blm = json.loads(subprocess.check_output([str(ffctl_path), 'blame', '--json'], text=True))
+        self.assertIn('processes', blm)
+        self.assertIn('active_pci', blm)
+        self.assertIn('active_usb', blm)
+        slp = json.loads(subprocess.check_output([str(ffctl_path), 'sleep-report', '--json'], text=True))
+        self.assertIsInstance(slp, dict)
+
+    def test_auto_boost_telemetry_ring_buffer_and_focus_throttle(self):
+        from collections import deque
+        from fpm import auto_boost
+        hist = deque(maxlen=5)
+        with mock.patch('fpm.auto_boost.power_now_watts', return_value=7.25), \
+             mock.patch('fpm.auto_boost.get_max_pkg_temp_c', return_value=51), \
+             mock.patch('fpm.auto_boost.battery_percent', return_value=82), \
+             mock.patch('fpm.auto_boost.read_text', return_value='battery'), \
+             mock.patch('pathlib.Path.mkdir'), \
+             mock.patch('pathlib.Path.write_text'), \
+             mock.patch('os.chmod'), \
+             mock.patch('pathlib.Path.replace'):
+            auto_boost._record_telemetry_sample(hist, True)
+            self.assertEqual(len(hist), 1)
+            self.assertEqual(hist[0]['watts'], 7.25)
+            self.assertEqual(hist[0]['temp_c'], 51)
+
+    def test_cosmic_ui_cairo_render_smoke(self):
+        import cairo
+        from fpm import cosmic_ui
+        surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 640, 400)
+        cr = cairo.Context(surf)
+        # Exercise drawing primitives directly on a real Cairo surface (no display server needed)
+        stars = cosmic_ui.CosmicBackdrop._init_stars(30)
+        self.assertEqual(len(stars), 30)
+        fake_self = mock.MagicMock()
+        fake_self._phase = 1.5
+        fake_self._stars = stars
+        fake_self._meteors = cosmic_ui.CosmicBackdrop._init_meteors(2)
+        fake_self._meteors[0]['active'] = True
+        fake_self._meteors[0]['progress'] = 0.5
+        cosmic_ui.CosmicBackdrop._draw_nebula(fake_self, cr, 640.0, 400.0, 1.5)
+        cosmic_ui.CosmicBackdrop._draw_stars(fake_self, cr, 640.0, 400.0, 1.5)
+        cosmic_ui.CosmicBackdrop._draw_shooting_stars(fake_self, cr, 640.0, 400.0)
+        cosmic_ui.CosmicBackdrop._draw_ringed_planet(fake_self, cr, 500.0, 110.0, 48.0, 1.5)
+        cosmic_ui.CosmicBackdrop._draw_exoplanet(fake_self, cr, 90.0, 310.0, 26.0, 1.5)
+        chart_mock = mock.MagicMock()
+        chart_mock._samples = [{'watts': 5.2, 'temp_c': 44}, {'watts': 11.4, 'temp_c': 53}, {'watts': 6.1, 'temp_c': 46}]
+        cosmic_ui.TelemetrySparklineChart._on_draw(chart_mock, None, cr, 500, 150)
 
 
 if __name__ == '__main__':

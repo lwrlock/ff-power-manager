@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import glob
+import json
 import os
 import signal
 import sys
 import time
+from collections import deque
 
 from .core import (
     apply,
+    battery_percent,
     load_config,
     on_battery_from_sysfs,
     optimize_desktop_responsiveness,
+    power_now_watts,
     set_smart_media_mode,
     set_cpu_freq_floor,
     set_gpu,
@@ -138,6 +142,62 @@ def get_cpu_load(prev_idle: float, prev_total: float) -> tuple[float, float, flo
 
 
 
+def _apply_focus_battery_throttle(on_bat: bool, is_media_playing: bool) -> None:
+    """Lower scheduler weight of unfocused heavy apps on battery; restore on focus or AC."""
+    throttle_targets = {
+        'chrome', 'chromium', 'brave', 'firefox', 'discord', 'slack', 'teams', 'spotify',
+    }
+    focused_pid = 0
+    focused_name = ''
+    try:
+        fpath = RUN_DIR / 'focused.json'
+        if fpath.exists():
+            fdata = json.loads(fpath.read_text(encoding='utf-8'))
+            focused_pid = int(fdata.get('pid', 0) or 0)
+            focused_name = str(fdata.get('wm_class', '') or '').lower()
+    except Exception:
+        pass
+
+    for comm_path in glob.glob('/proc/[0-9]*/comm'):
+        try:
+            pid = int(comm_path.split('/')[2])
+            with open(comm_path, 'r', encoding='utf-8', errors='ignore') as f:
+                cname = f.read().strip().lower()
+            if cname not in throttle_targets:
+                continue
+            is_focused = (pid == focused_pid) or (focused_name and cname in focused_name)
+            want_nice = 10 if (on_bat and not is_media_playing and not is_focused and focused_pid > 0) else 0
+            if os.getpriority(os.PRIO_PROCESS, pid) != want_nice:
+                os.setpriority(os.PRIO_PROCESS, pid, want_nice)
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+            continue
+
+
+def _record_telemetry_sample(history: deque, on_bat: bool) -> None:
+    """Record rolling wattage and CPU package temperature history for GUI/TUI graphs."""
+    try:
+        watts = power_now_watts()
+        temp_c = get_max_pkg_temp_c()
+        cap = battery_percent()
+        mode = read_text(RUN_DIR / 'power.mode') or ('battery' if on_bat else 'ac')
+        history.append({
+            'ts': int(time.time()),
+            'watts': round(float(watts), 2) if watts is not None else 0.0,
+            'temp_c': int(temp_c) if temp_c > 0 else 0,
+            'cap': int(cap) if cap is not None else 0,
+            'mode': mode,
+            'on_bat': bool(on_bat),
+        })
+        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_p = RUN_DIR / 'telemetry_history.json.tmp'
+        final_p = RUN_DIR / 'telemetry_history.json'
+        tmp_p.write_text(json.dumps(list(history)), encoding='utf-8')
+        os.chmod(tmp_p, 0o644)
+        tmp_p.replace(final_p)
+    except Exception:
+        pass
+
+
 def get_max_pkg_temp_c() -> int:
     max_c = 0
     for p in glob.glob('/sys/class/hwmon/hwmon*/temp*_input'):
@@ -165,8 +225,11 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
     last_seen_time = 0.0
     last_high_load_time = 0.0
     last_tune_time = 0.0
+    last_hist_time = 0.0
+    last_focus_time = 0.0
     prev_idle = 0.0
     prev_total = 0.0
+    telemetry_history: deque = deque(maxlen=180)
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine started.\n")
     sys.stdout.flush()
@@ -314,6 +377,14 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                         pass
 
             sleep_time = poll_interval
+
+        if now - last_hist_time >= 5.0:
+            last_hist_time = now
+            _record_telemetry_sample(telemetry_history, on_bat)
+
+        if now - last_focus_time >= 4.0:
+            last_focus_time = now
+            _apply_focus_battery_throttle(on_bat, is_media_playing)
 
         time.sleep(sleep_time)
 

@@ -4,32 +4,40 @@ import json
 import os
 import pathlib
 import subprocess
+import threading
+import time
+from collections import deque
 from copy import deepcopy
 
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Adw, Gio, GLib, Gtk, Gdk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from .core import (
     CONFIG_PATH,
+    PRESETS,
+    RUN_DIR,
     SENSOR_CONFIG_PATH,
+    _run_helper,
     load_config,
     load_sensor_config,
-    save_config,
     save_and_apply_config,
+    save_config,
     save_sensor_config,
-    status_snapshot,
     set_lenovo_feature,
-    PRESETS,
-    _run_helper,
+    status_snapshot,
 )
+from .cosmic_ui import CosmicBackdrop, TelemetrySparklineChart
 
 USER_CFG = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
 SYSTEM_SENSOR = 'ff-presence-sensor.service'
 USER_PRESENCE = 'ff-presence-session.service'
 AUTOBOOST_SERVICE = 'ff-power-autoboost.service'
 TELEMETRY_FILE = pathlib.Path('/run/ff-power-manager/sensor_telemetry.json')
+HIST_FILE = pathlib.Path('/run/ff-power-manager/telemetry_history.json')
+SLEEP_FILE = pathlib.Path('/var/lib/ff-power-manager/last_sleep.json')
 
 DEFAULT_PRESENCE = {
     'enabled': True,
@@ -46,30 +54,87 @@ DEFAULT_PRESENCE = {
     'inhibit_on_media': True,
 }
 
-CUSTOM_CSS = b"""
+COSMIC_CSS = b"""
+window, window.background, AdwApplicationWindow {
+    background-color: #080412;
+    color: #f5f3ff;
+}
+headerbar, AdwHeaderBar {
+    background: rgba(12, 7, 26, 0.72);
+    border-bottom: 1px solid rgba(167, 139, 250, 0.22);
+    color: #f5f3ff;
+}
+viewswitcherbar, .bottom-bar {
+    background: rgba(12, 7, 26, 0.78);
+    border-top: 1px solid rgba(167, 139, 250, 0.22);
+}
+scrolledwindow, viewport, preferencespage, clamp {
+    background: transparent;
+}
+list.boxed-list, .boxed-list {
+    background-color: rgba(18, 11, 38, 0.72);
+    border: 1px solid rgba(167, 139, 250, 0.24);
+    border-radius: 16px;
+}
+list.boxed-list > row {
+    background-color: transparent;
+    border-bottom: 1px solid rgba(167, 139, 250, 0.10);
+}
+list.boxed-list > row:last-child {
+    border-bottom: none;
+}
+.cosmic-card {
+    background: rgba(20, 12, 42, 0.74);
+    border: 1px solid rgba(167, 139, 250, 0.28);
+    border-radius: 16px;
+    padding: 14px 16px;
+}
+.cosmic-chart-box {
+    background: rgba(14, 9, 32, 0.78);
+    border: 1px solid rgba(139, 92, 246, 0.34);
+    border-radius: 16px;
+    padding: 10px 12px;
+}
+.hero-value {
+    font-size: 23px;
+    font-weight: 800;
+    color: #e0f2fe;
+}
+.hero-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #c4b5fd;
+    letter-spacing: 0.4px;
+}
+.hero-sub {
+    font-size: 11px;
+    color: #94a3b8;
+}
 .card-hero {
-    background: rgba(56, 189, 248, 0.08);
-    border-radius: 12px;
-    border: 1px solid rgba(56, 189, 248, 0.25);
-    padding: 10px;
+    background: rgba(88, 28, 135, 0.32);
+    border-radius: 14px;
+    border: 1px solid rgba(192, 132, 252, 0.35);
+    padding: 8px;
 }
 .badge-active {
-    background-color: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
+    background-color: rgba(34, 197, 94, 0.22);
+    color: #4ade80;
+    border: 1px solid rgba(74, 222, 128, 0.35);
     border-radius: 9999px;
     padding: 3px 10px;
     font-weight: bold;
 }
 .badge-standby {
-    background-color: rgba(245, 158, 11, 0.2);
-    color: #f59e0b;
+    background-color: rgba(245, 158, 11, 0.22);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.35);
     border-radius: 9999px;
     padding: 3px 10px;
     font-weight: bold;
 }
 .badge-disabled {
-    background-color: rgba(148, 163, 184, 0.15);
-    color: #94a3b8;
+    background-color: rgba(148, 163, 184, 0.16);
+    color: #cbd5e1;
     border-radius: 9999px;
     padding: 3px 10px;
 }
@@ -79,6 +144,19 @@ CUSTOM_CSS = b"""
     font-weight: 600;
 }
 """
+
+
+def _read_pkg_temp_c() -> int:
+    for hdir in pathlib.Path('/sys/class/hwmon').glob('hwmon*'):
+        try:
+            name = (hdir / 'name').read_text().strip()
+            if name in ('coretemp', 'k10temp', 'zenpower'):
+                mc = int((hdir / 'temp1_input').read_text().strip())
+                if 10000 < mc < 120000:
+                    return mc // 1000
+        except Exception:
+            pass
+    return 0
 
 
 def load_user_presence() -> dict:
@@ -174,7 +252,7 @@ class PowerManagerApp(Adw.Application):
 
     def _load_styles(self):
         provider = Gtk.CssProvider()
-        provider.load_from_data(CUSTOM_CSS)
+        provider.load_from_data(COSMIC_CSS)
         display = Gdk.Display.get_default()
         if display:
             Gtk.StyleContext.add_provider_for_display(
@@ -184,7 +262,7 @@ class PowerManagerApp(Adw.Application):
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title='FF Power Manager', default_width=960, default_height=800)
+        super().__init__(application=app, title='FF Power Manager', default_width=1020, default_height=840)
         self.cfg = load_config()
         self.scfg = load_sensor_config()
         self.pcfg = load_user_presence()
@@ -192,29 +270,40 @@ class MainWindow(Adw.ApplicationWindow):
         self.mode_controls = {}
         self._presence_syncing = False
         self._lenovo_syncing = False
+        self._local_samples: deque = deque(maxlen=90)
+        self._blame_busy = False
 
-        self.overlay = Adw.ToastOverlay()
-        self.set_content(self.overlay)
+        # Layered desktop app layout: animated cosmic space canvas + translucent frosted glass UI
+        root_overlay = Gtk.Overlay()
+        self.backdrop = CosmicBackdrop()
+        root_overlay.set_child(self.backdrop)
+
+        self.toast_overlay = Adw.ToastOverlay()
+        root_overlay.add_overlay(self.toast_overlay)
+        self.set_content(root_overlay)
+
         toolbar = ToolbarViewCls()
-        self.overlay.set_child(toolbar)
+        self.toast_overlay.set_child(toolbar)
 
         self.stack = Adw.ViewStack()
         title = Adw.ViewSwitcherTitle(stack=self.stack, title='FF Power Manager')
         header = Adw.HeaderBar(title_widget=title)
 
-        # Launch TUI button in header bar
         tui_btn = Gtk.Button(icon_name='utilities-terminal-symbolic', tooltip_text='Open Terminal Dashboard (ff-tui)')
         tui_btn.add_css_class('flat')
         tui_btn.connect('clicked', lambda *_: self._launch_tui())
         header.pack_start(tui_btn)
 
-        # Refresh button in header bar
-        refresh = Gtk.Button(icon_name='view-refresh-symbolic', tooltip_text='Refresh Hardware Status')
+        fx_btn = Gtk.ToggleButton(label='Space FX', active=True, tooltip_text='Toggle animated cosmic space canvas')
+        fx_btn.add_css_class('flat')
+        fx_btn.connect('toggled', lambda btn: self.backdrop.set_enabled(btn.get_active()))
+        header.pack_start(fx_btn)
+
+        refresh = Gtk.Button(icon_name='view-refresh-symbolic', tooltip_text='Refresh Hardware Telemetry')
         refresh.add_css_class('flat')
         refresh.connect('clicked', lambda *_: self.refresh_status())
         header.pack_end(refresh)
 
-        # About button in header bar
         about_btn = Gtk.Button(icon_name='help-about-symbolic', tooltip_text='About FF Power Manager')
         about_btn.add_css_class('flat')
         about_btn.connect('clicked', lambda *_: self._show_about())
@@ -229,6 +318,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         for page_widget, name, title_str, icon_str in [
             (self._overview_page(), 'overview', 'Overview', 'view-dashboard-symbolic'),
+            (self._profiler_page(), 'profiler', 'Blame Profiler', 'system-search-symbolic'),
             (self._mode_page('battery'), 'battery', 'Battery', 'battery-good-symbolic'),
             (self._mode_page('ac'), 'ac', 'AC Power', 'power-profile-performance-symbolic'),
             (self._presence_page(), 'presence', 'Display & Presence', 'system-lock-screen-symbolic'),
@@ -240,13 +330,12 @@ class MainWindow(Adw.ApplicationWindow):
                 vp = self.stack.add_titled(page_widget, name, title_str)
                 vp.set_icon_name(icon_str)
 
-        # Automatically start live telemetry polling in GUI (every 2.5s)
-        self.live_source = GLib.timeout_add_seconds(3, self._live_tick)
-
+        self.live_source = GLib.timeout_add_seconds(2, self._live_tick)
         self.refresh_status()
+        self._run_blame_async()
 
     def toast(self, text: str) -> None:
-        self.overlay.add_toast(Adw.Toast(title=text, timeout=3))
+        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=3))
 
     def _action_row(self, title: str, subtitle: str = '', icon: str = '') -> Adw.ActionRow:
         row = Adw.ActionRow(title=title)
@@ -256,41 +345,52 @@ class MainWindow(Adw.ApplicationWindow):
             row.add_prefix(Gtk.Image.new_from_icon_name(icon))
         return row
 
+    def _hero_card(self, label_txt: str, value_txt: str, sub_txt: str) -> tuple[Gtk.Box, Gtk.Label, Gtk.Label]:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3, hexpand=True)
+        box.add_css_class('cosmic-card')
+        lbl = Gtk.Label(label=label_txt, xalign=0.0)
+        lbl.add_css_class('hero-label')
+        val = Gtk.Label(label=value_txt, xalign=0.0)
+        val.add_css_class('hero-value')
+        sub = Gtk.Label(label=sub_txt, xalign=0.0, ellipsize=3)
+        sub.add_css_class('hero-sub')
+        box.append(lbl)
+        box.append(val)
+        box.append(sub)
+        return box, val, sub
+
     def _launch_tui(self) -> None:
         terminals = [
-            ['blackbox-terminal', '-e', '/usr/local/bin/ff-tui'],
-            ['blackbox-terminal', '-e', './ff-tui'],
             ['gnome-terminal', '--', '/usr/local/bin/ff-tui'],
             ['ptyxis', '-e', '/usr/local/bin/ff-tui'],
+            ['blackbox-terminal', '-e', '/usr/local/bin/ff-tui'],
             ['kgx', '-e', '/usr/local/bin/ff-tui'],
             ['x-terminal-emulator', '-e', '/usr/local/bin/ff-tui'],
         ]
-        launched = False
         for cmd in terminals:
             try:
                 subprocess.Popen(cmd)
-                launched = True
                 self.toast('Terminal Dashboard (ff-tui) launched.')
-                break
+                return
             except (FileNotFoundError, OSError):
                 continue
-        if not launched:
-            self.toast('Could not launch terminal. You can run "ff-tui" manually in a terminal.')
+        self.toast('Run "ff-tui" in your terminal.')
 
     def _show_about(self) -> None:
         if hasattr(Adw, 'AboutDialog'):
             dialog = Adw.AboutDialog(
                 application_name='FF Power Manager',
-                application_icon='preferences-system-power',
+                application_icon='ff-power-manager',
                 developer_name='Furkan (@lwrlock)',
-                version='2.1.0',
+                version='2.2.0',
                 website='https://lwrlock.github.io/ff-power-manager/',
                 issue_url='https://github.com/lwrlock/ff-power-manager/issues',
                 license_type=Gtk.License.MIT_X11,
                 comments=(
                     "Universal Linux power management, dynamic CPU/GPU topology tuning, "
-                    "battery-only adaptive refresh rate, and ST VL53L1 HID presence automation.\n\n"
-                    "Open-source systems engineering project by Furkan (@lwrlock, 18-year-old CS/CE student)."
+                    "battery-only adaptive refresh rate, wakeup blame profiler, s2idle drain telemetry, "
+                    "and ST VL53L1 presence automation.\n\n"
+                    "Built by Furkan (@lwrlock, 18-year-old CS/CE student) with AI-assisted engineering via Google DeepMind Antigravity."
                 ),
             )
             dialog.present(self)
@@ -299,55 +399,78 @@ class MainWindow(Adw.ApplicationWindow):
                 transient_for=self,
                 modal=True,
                 program_name='FF Power Manager',
-                logo_icon_name='preferences-system-power',
+                logo_icon_name='ff-power-manager',
                 authors=['Furkan (@lwrlock)'],
-                version='2.1.0',
+                version='2.2.0',
                 website='https://lwrlock.github.io/ff-power-manager/',
                 license_type=Gtk.License.MIT_X11,
-                comments=(
-                    "Universal Linux power management, dynamic CPU/GPU topology tuning, "
-                    "battery-only adaptive refresh rate, and ST VL53L1 HID presence automation."
-                ),
+                comments="Universal Linux power, adaptive refresh & hardware residency suite.",
             )
             dialog.present()
 
     def _overview_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title='Overview', icon_name='view-dashboard-symbolic')
 
-        # Hero Banner: Quick TUI Launch
-        hero_group = Adw.PreferencesGroup()
-        page.add(hero_group)
+        # Cosmic Hero Telemetry Deck
+        deck_grp = Adw.PreferencesGroup()
+        page.add(deck_grp)
 
-        hero_row = Adw.ActionRow(
-            title='Terminal Dashboard (C &amp; x86_64 Assembly Engine)',
-            subtitle='btop-style dynamic tabbed interface, live ToF radar, and 0.0% CPU overhead.'
+        hero_grid = Gtk.Grid(column_spacing=10, row_spacing=10, column_homogeneous=True, hexpand=True)
+        c1, self.hero_watts, self.hero_watts_sub = self._hero_card('POWER DRAW', '-- W', 'Detecting...')
+        c2, self.hero_temp, self.hero_temp_sub = self._hero_card('PACKAGE TEMP', '--°C', 'EPP: —')
+        c3, self.hero_bat, self.hero_bat_sub = self._hero_card('BATTERY & HEALTH', '--%', 'Design: —')
+        c4, self.hero_sleep, self.hero_sleep_sub = self._hero_card('LAST SUSPEND', 'No sample', 'ff-sleep-guard active')
+        hero_grid.attach(c1, 0, 0, 1, 1)
+        hero_grid.attach(c2, 1, 0, 1, 1)
+        hero_grid.attach(c3, 2, 0, 1, 1)
+        hero_grid.attach(c4, 3, 0, 1, 1)
+        deck_grp.add(hero_grid)
+
+        # Live Telemetry Sparkline Chart
+        chart_grp = Adw.PreferencesGroup(
+            title='Live Power &amp; Thermal Telemetry',
+            description='Real-time wattage (cyan/violet) and CPU package temperature (magenta dashed).'
         )
-        hero_row.add_css_class('card-hero')
-        hero_row.add_prefix(Gtk.Image.new_from_icon_name('utilities-terminal-symbolic'))
+        page.add(chart_grp)
+        chart_wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        chart_wrap.add_css_class('cosmic-chart-box')
+        self.chart = TelemetrySparklineChart()
+        chart_wrap.append(self.chart)
+        chart_grp.add(chart_wrap)
 
-        open_tui_btn = Gtk.Button(label='Launch TUI', valign=Gtk.Align.CENTER)
-        open_tui_btn.add_css_class('suggested-action')
-        open_tui_btn.add_css_class('pill-btn')
-        open_tui_btn.connect('clicked', lambda *_: self._launch_tui())
-        hero_row.add_suffix(open_tui_btn)
-        hero_group.add(hero_row)
+        # Quick Profile Bar + Terminal Shortcut
+        quick_grp = Adw.PreferencesGroup(title='Quick Profile &amp; Workspace Actions')
+        page.add(quick_grp)
+        quick_row = self._action_row('Instant Profile Switch', 'Applies CPU EPP, RAPL ceilings, ASPM, and refresh rules immediately.')
+        qbox = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        for label, target in [
+            ('Auto Balanced', 'auto'),
+            ('Max Battery', 'max_battery'),
+            ('Cool & Quiet', 'cool_quiet'),
+            ('Extreme', 'extreme_performance'),
+        ]:
+            b = Gtk.Button(label=label)
+            b.add_css_class('pill-btn')
+            if target == 'auto':
+                b.add_css_class('suggested-action')
+            b.connect('clicked', self._quick_apply_profile, target)
+            qbox.append(b)
+        quick_row.add_suffix(qbox)
+        quick_grp.add(quick_row)
 
-        # Group 1: Real-time Power & Hardware Status
+        # Live Hardware Register Table
         group = Adw.PreferencesGroup(
-            title='Live Power &amp; Hardware Telemetry',
-            description='Read directly from kernel sysfs hardware registers in sub-microsecond assembly.'
+            title='Hardware Registers &amp; Topology',
+            description='Telemetry read directly from Linux kernel sysfs &amp; procfs.'
         )
         page.add(group)
 
         self.rows = {}
         for key, title, icon in [
             ('mode', 'Power Source', 'ac-adapter-symbolic'),
-            ('watts', 'Active Power Draw', 'energy-battery-symbolic'),
-            ('battery_percent', 'Battery Charge Level', 'battery-level-80-symbolic'),
             ('cpu_topology', 'CPU Core Topology', 'processor-symbolic'),
             ('refresh_rate', 'Display Refresh Rate', 'video-display-symbolic'),
-            ('gnome_profile', 'GNOME Power Profile', 'preferences-system-symbolic'),
-            ('epp', 'CPU Energy Preference (EPP)', 'applications-science-symbolic'),
+            ('gnome_profile', 'Desktop Power Profile', 'preferences-system-symbolic'),
             ('turbo', 'Turbo Boost', 'speedometer-symbolic'),
             ('pcie_aspm', 'PCIe ASPM Link Policy', 'drive-harddisk-symbolic'),
             ('gpu_perf', 'GPU Clock &amp; Power Profile', 'applications-graphics-symbolic'),
@@ -359,10 +482,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.rows[key] = row
             group.add(row)
 
-        # Group 2: ST VL53L1 ToF Presence Radar
+        # ToF Presence Sensor Card
         radar_group = Adw.PreferencesGroup(
             title='ST VL53L1 ToF Human Presence Radar',
-            description='Lenovo Intel ISH infrared sensor (0.0% CPU overhead, millimeter precision). Camera is never used.'
+            description='Hardware HID proximity radar (zero webcam access).'
         )
         page.add(radar_group)
 
@@ -380,48 +503,69 @@ class MainWindow(Adw.ApplicationWindow):
         self.tof_distance_row.add_suffix(self.tof_bar)
         radar_group.add(self.tof_distance_row)
 
-        self.tof_telemetry_row = self._action_row('Telemetry Stream', 'Waiting for hardware packets...', 'network-transmit-receive-symbolic')
+        self.tof_telemetry_row = self._action_row('Telemetry Stream', 'Waiting for packets...', 'network-transmit-receive-symbolic')
         radar_group.add(self.tof_telemetry_row)
 
-        # Group 3: Lenovo IdeaPad Hardware Integration
+        # Charge & OEM Hardware Controls
         lenovo_group = Adw.PreferencesGroup(
-            title='Lenovo IdeaPad Hardware Integration (VPC2004)',
-            description='Proprietary ACPI firmware hardware switches.'
+            title='Battery Conservation &amp; OEM Hardware Controls',
+            description='80% charge threshold (Lenovo VPC2004 or standard sysfs charge_control_end_threshold).'
         )
         page.add(lenovo_group)
 
         self.lenovo_cm_row = SwitchRowCls(
-            title='Battery Conservation Mode (80% Limit)',
-            subtitle='Stops charging at 80% to dramatically extend lithium battery lifespan.'
+            title='80% Battery Conservation Limit',
+            subtitle='Limits charge at 80% on mains to maximize lithium cell cycle longevity.'
         )
         self.lenovo_cm_row.connect('notify::active', lambda row, _: self._toggle_lenovo('conservation_mode', row.get_active()))
         lenovo_group.add(self.lenovo_cm_row)
 
         self.lenovo_fn_row = SwitchRowCls(
             title='Fn-Lock (Primary Function Keys)',
-            subtitle='Use F1-F12 for media/brightness hotkeys without holding Fn.'
+            subtitle='Use F1-F12 hotkeys without holding Fn (Lenovo VPC2004).'
         )
         self.lenovo_fn_row.connect('notify::active', lambda row, _: self._toggle_lenovo('fn_lock', row.get_active()))
         lenovo_group.add(self.lenovo_fn_row)
 
         self.lenovo_usb_row = SwitchRowCls(
             title='Always-On USB Charging',
-            subtitle='Allows charging smartphones and accessories even when the laptop is turned off.'
+            subtitle='Keep powered USB ports active when suspended (Lenovo VPC2004).'
         )
         self.lenovo_usb_row.connect('notify::active', lambda row, _: self._toggle_lenovo('usb_charging', row.get_active()))
         lenovo_group.add(self.lenovo_usb_row)
 
-        # Group 4: Quick Action Controls
-        actions = Adw.PreferencesGroup(title='Quick Controls')
-        page.add(actions)
+        return page
 
-        apply_row = self._action_row('Re-apply Active Profile', 'Enforces hardware power management policies and verifies sysfs registers.')
-        btn = Gtk.Button(label='Apply Now', valign=Gtk.Align.CENTER)
-        btn.add_css_class('suggested-action')
-        btn.add_css_class('pill-btn')
-        btn.connect('clicked', self._apply_now)
-        apply_row.add_suffix(btn)
-        actions.add(apply_row)
+    def _profiler_page(self) -> Adw.PreferencesPage:
+        page = Adw.PreferencesPage(title='Blame Profiler', icon_name='system-search-symbolic')
+
+        ctrl_grp = Adw.PreferencesGroup(
+            title='Energy &amp; C-State Wakeup Profiler (ffctl blame)',
+            description='250ms native C procfs &amp; runtime-PM bus profiler identifying wakeup offenders and active PCI/USB hardware.'
+        )
+        page.add(ctrl_grp)
+        sample_btn = Gtk.Button(label='Sample Now (250ms)', valign=Gtk.Align.CENTER)
+        sample_btn.add_css_class('suggested-action')
+        sample_btn.add_css_class('pill-btn')
+        sample_btn.connect('clicked', lambda *_: self._run_blame_async())
+        s_row = self._action_row('Run Live Wakeup Sample', 'Ranks top processes by CPU usage + context switches/sec and inspects active hardware.')
+        s_row.add_suffix(sample_btn)
+        ctrl_grp.add(s_row)
+
+        self.blame_proc_grp = Adw.PreferencesGroup(title='Top Process Wakeup Offenders')
+        page.add(self.blame_proc_grp)
+        self.blame_proc_rows = []
+        for i in range(6):
+            r = self._action_row(f'#{i + 1} Sampling...', 'Click "Sample Now" or wait for initial probe.')
+            self.blame_proc_grp.add(r)
+            self.blame_proc_rows.append(r)
+
+        self.blame_hw_grp = Adw.PreferencesGroup(title='Active Hardware Devices (Runtime Status = active)')
+        page.add(self.blame_hw_grp)
+        self.blame_pci_row = self._action_row('Active PCI Controllers', 'Scanning...')
+        self.blame_usb_row = self._action_row('Active USB Peripherals', 'Scanning...')
+        self.blame_hw_grp.add(self.blame_pci_row)
+        self.blame_hw_grp.add(self.blame_usb_row)
 
         return page
 
@@ -439,7 +583,7 @@ class MainWindow(Adw.ApplicationWindow):
         icon = 'battery-good-symbolic' if mode == 'battery' else 'power-profile-performance-symbolic'
         page = Adw.PreferencesPage(title=label, icon_name=icon)
 
-        presets = Adw.PreferencesGroup(title='Hardware Presets', description='Carefully calibrated and benchmarked profiles.')
+        presets = Adw.PreferencesGroup(title='Hardware Presets', description='Calibrated power, EPP, and ASPM profiles.')
         page.add(presets)
         preset_row = self._action_row('Select Preset')
         box = Gtk.Box(spacing=8, valign=Gtk.Align.CENTER)
@@ -460,94 +604,58 @@ class MainWindow(Adw.ApplicationWindow):
         page.add(core_group)
         s = self.cfg[mode]
         controls = {}
-
-        p_row = self._combo_row('GNOME Power Profile', ['system', 'power-saver', 'balanced', 'performance'], s['gnome_profile'])
-        controls['gnome_profile'] = p_row
-        core_group.add(p_row)
-
-        epp_row = self._combo_row('CPU Energy Preference (EPP)', ['system', 'power', 'balance_power', 'balance_performance', 'performance'], s['epp'])
-        controls['epp'] = epp_row
-        core_group.add(epp_row)
-
-        turbo_row = SwitchRowCls(title='Intel Turbo Boost', subtitle='Disabling capping may increase battery life; keeping enabled provides peak responsiveness.')
-        turbo_row.set_active(bool(s['turbo']))
-        controls['turbo'] = turbo_row
-        core_group.add(turbo_row)
-
-        wifi_row = SwitchRowCls(title='Wi-Fi Power Management', subtitle='Enables dynamic power saving on Intel Wi-Fi 7 chipset during idle.')
-        wifi_row.set_active(bool(s['wifi_power_save']))
-        controls['wifi_power_save'] = wifi_row
-        core_group.add(wifi_row)
-
-        # If on battery page: add Battery Health & Degradation Analytics Card
-        if mode == 'battery':
-            health_group = Adw.PreferencesGroup(
-                title='Battery Health &amp; Degradation Analytics',
-                description='Real-time telemetry reported by hardware fuel gauge.'
-            )
-            page.add(health_group)
-
-            self.health_rows = {}
-            for hkey, htitle, hicon in [
-                ('health_score', 'Battery Health Score', 'emblem-favorite-symbolic'),
-                ('capacities', 'Design vs Full Capacity', 'battery-level-100-symbolic'),
-                ('cycles', 'Charge Cycle Count', 'view-refresh-symbolic'),
-                ('voltage', 'Pack Voltage &amp; Chemistry', 'flash-symbolic'),
-            ]:
-                hrow = self._action_row(htitle, '—', hicon)
-                self.health_rows[hkey] = hrow
-                health_group.add(hrow)
-
-        # If on AC page: add Auto Dynamic Boost & GameMode Engine Card
-        if mode == 'ac':
-            boost_group = Adw.PreferencesGroup(
-                title='Auto Dynamic Boost &amp; GameMode Engine',
-                description='Background watcher that detects heavy workloads and unleashes max power.'
-            )
-            page.add(boost_group)
-
-            self.autoboost_switch = SwitchRowCls(
-                title='Automatic GameMode &amp; Compiler Boost',
-                subtitle='Detects Steam, 3D rendering, and compilation to auto-boost CPU/GPU clocks.'
-            )
-            self.autoboost_switch.set_active(is_active(AUTOBOOST_SERVICE))
-            self.autoboost_switch.connect('notify::active', self._toggle_autoboost)
-            boost_group.add(self.autoboost_switch)
-
-        advanced = Adw.PreferencesGroup(title='Advanced Hardware Power Management')
-        page.add(advanced)
-        specs = [
-            ('hwp_dynamic_boost', 'HWP Dynamic Boost', ['system', 'off', 'on']),
-            ('nvme_runtime_pm', 'NVMe APST Runtime PM', ['system', 'auto', 'on']),
-            ('gpu_runtime_pm', 'Intel Arc GPU Runtime PM', ['system', 'auto', 'on']),
-            ('pcie_aspm', 'PCIe ASPM Link Policy', ['system', 'default', 'powersave', 'powersupersave', 'performance']),
-            ('usb_autosuspend', 'USB Autosuspend', ['system', 'auto']),
-            ('audio_powersave', 'Audio Chipset Power Save', ['system', 'on', 'off']),
-        ]
-        for key, title, vals in specs:
-            row = self._combo_row(title, vals, s[key])
+        for key, title, opts, sub in [
+            ('gnome_profile', 'GNOME Power Profile', ['system', 'power-saver', 'balanced', 'performance'], 'Desktop profile applied on trigger.'),
+            ('epp', 'CPU Energy Performance Preference (EPP)', ['system', 'default', 'power', 'balance_power', 'balance_performance', 'performance'], 'Hardware P-state power/latency bias.'),
+            ('pcie_aspm', 'PCIe ASPM Link Policy', ['system', 'default', 'powersave', 'powersupersave', 'performance'], 'Active State Power Management for PCIe links.'),
+            ('nvme_runtime_pm', 'NVMe SSD Runtime Power', ['system', 'auto', 'on'], 'Deep APST sleep when NVMe queue is idle.'),
+            ('gpu_runtime_pm', 'Integrated GPU Power Policy', ['system', 'auto', 'on'], 'GPU frequency and runtime PM policy.'),
+            ('usb_autosuspend', 'USB Controller Autosuspend', ['system', 'auto'], 'Excludes active HID peripherals automatically.'),
+            ('audio_powersave', 'Audio Codec Power Save', ['system', 'on', 'off'], 'Lowers audio DSP draw when idle.'),
+            ('hwp_dynamic_boost', 'Intel HWP Dynamic Boost', ['system', 'on', 'off'], 'Hardware frequency scaling responsiveness.'),
+        ]:
+            row = self._combo_row(title, opts, str(s.get(key, 'system')), sub)
             controls[key] = row
-            advanced.add(row)
+            core_group.add(row)
+
+        for key, title, sub in [
+            ('turbo', 'CPU Turbo Boost', 'Allows maximum single and multi-core boost frequencies.'),
+            ('wifi_power_save', 'Wi-Fi 802.11 Power Save', 'Reduces radio idle power (automatically bypassed on iwlwifi 7 chips if throttling occurs).'),
+        ]:
+            sw = SwitchRowCls(title=title, subtitle=sub)
+            sw.set_active(bool(s.get(key, True)))
+            controls[key] = sw
+            core_group.add(sw)
+
+        if mode == 'ac':
+            extra_grp = Adw.PreferencesGroup(title='Background Automation')
+            page.add(extra_grp)
+            ab_row = SwitchRowCls(
+                title='Auto Dynamic Boost &amp; Telemetry Watcher',
+                subtitle='Detects compilers, games &amp; local LLMs, logs telemetry graph samples, and clamps thermal spikes (>=90°C).'
+            )
+            ab_row.set_active(is_active(AUTOBOOST_SERVICE))
+            ab_row.connect('notify::active', self._toggle_autoboost)
+            extra_grp.add(ab_row)
 
         save_group = Adw.PreferencesGroup()
         page.add(save_group)
-        save_row = self._action_row(f'Save {label} Settings', 'Changes take effect immediately on active power source.')
-        save_btn = Gtk.Button(label='Save & Apply', valign=Gtk.Align.CENTER)
-        save_btn.add_css_class('suggested-action')
-        save_btn.add_css_class('pill-btn')
-        save_btn.connect('clicked', self._save_mode, mode)
-        save_row.add_suffix(save_btn)
+        btn = Gtk.Button(label='Save & Apply Configuration', valign=Gtk.Align.CENTER)
+        btn.add_css_class('suggested-action')
+        btn.add_css_class('pill-btn')
+        btn.connect('clicked', self._save_mode, mode)
+        save_row = self._action_row(f'Apply {label} Rules', 'Writes /etc/ff-power-manager/config.json via PolicyKit.')
+        save_row.add_suffix(btn)
         save_group.add(save_row)
         self.mode_controls[mode] = controls
         return page
 
     def _presence_page(self) -> Adw.PreferencesPage:
-        page = Adw.PreferencesPage(title='Display &amp; Presence', icon_name='system-lock-screen-symbolic')
+        page = Adw.PreferencesPage(title='Display & Presence', icon_name='system-lock-screen-symbolic')
 
-        # Adaptive Display Refresh Optimization
         display_grp = Adw.PreferencesGroup(
-            title='Adaptive Display Refresh Rate (Mutter / Wayland)',
-            description='Balances battery endurance and smooth high-refresh response without manual switching.'
+            title='Adaptive Display Refresh Rate (GNOME / Hyprland / Plasma)',
+            description='Automatically shifts refresh rate between 60 Hz idle and max Hz on battery.'
         )
         page.add(display_grp)
         self.promotion_switch = SwitchRowCls(
@@ -559,21 +667,20 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.refresh_switch = SwitchRowCls(
             title='Dynamic Refresh Rate Switching',
-            subtitle='Enables automatic display mode management via Mutter DisplayConfig D-Bus.'
+            subtitle='Enables automatic display mode management via Mutter / Hyprland / Plasma backends.'
         )
         self.refresh_switch.set_active(bool(self.pcfg.get('auto_refresh_rate', True)))
         display_grp.add(self.refresh_switch)
 
-        # Panel Screen Care & Anti-Burn-in
         oled_grp = Adw.PreferencesGroup(
             title='Panel Screen Care &amp; Inactivity Dimming',
-            description='Reduces static display burn-in risk and lowers panel draw when idle.'
+            description='Reduces static burn-in risk and lowers display draw when idle.'
         )
         page.add(oled_grp)
 
         self.oled_care_switch = SwitchRowCls(
-            title='OLED Anti-Burn-in &amp; Dynamic Dimming',
-            subtitle='Gradually dims panel on inactivity; powers down pixels (0W pure black) when away.'
+            title='Idle Screen Dimming &amp; Zero-Touch DPMS Off',
+            subtitle='Dims display on inactivity and turns off panel when user leaves range.'
         )
         self.oled_care_switch.set_active(bool(self.pcfg.get('oled_screen_care', True)))
         oled_grp.add(self.oled_care_switch)
@@ -582,20 +689,19 @@ class MainWindow(Adw.ApplicationWindow):
         self.oled_dim_spin.set_value(float(self.pcfg.get('oled_dim_inactive_sec', 45)))
         dim_row = self._action_row(
             'Inactivity Dimming Delay (seconds)',
-            'Time of user inactivity before subtle OLED dimming begins (Recommended: 45s).'
+            'Delay before subtle panel dimming activates.'
         )
         dim_row.add_suffix(self.oled_dim_spin)
         oled_grp.add(dim_row)
 
-        # Lenovo Human Presence Detection (ToF)
         status = Adw.PreferencesGroup(
-            title='Lenovo Human Presence Detection (ST VL53L1 ToF)',
-            description='Hardware Time-of-Flight radar (0.0% CPU overhead). Webcams are never accessed.'
+            title='ST VL53L1 ToF Human Presence Sensor',
+            description='Hardware Time-of-Flight HID radar (optional IdeaPad/ISH hardware).'
         )
         page.add(status)
         self.presence_service_row = SwitchRowCls(
             title='Presence Automation Daemon',
-            subtitle='Instant screen wake upon return, zero-touch blanking when away.'
+            subtitle='Instant screen wake upon approach, zero-touch blanking when away.'
         )
         is_sensor_active = is_active(SYSTEM_SENSOR)
         enabled_setting = bool(self.pcfg.get('enabled', True))
@@ -603,42 +709,33 @@ class MainWindow(Adw.ApplicationWindow):
         self.presence_service_row.connect('notify::active', self._presence_toggle)
         status.add(self.presence_service_row)
 
-        tuning = Adw.PreferencesGroup(title='ToF Timing &amp; Sensitivity Tuning')
+        tuning = Adw.PreferencesGroup(title='ToF Timing &amp; Media Safeguards')
         page.add(tuning)
 
         self.silence_spin = Gtk.SpinButton.new_with_range(5.0, 90.0, 1.0)
-        self.silence_spin.set_value(float(self.scfg.get('silence_timeout', 30.0)))
-        silence_row = self._action_row(
-            'Sensor Silence Floor (seconds)',
-            'Prevents false standby triggers when user sits motionless (Recommended: 30s).'
-        )
+        self.silence_spin.set_value(float(self.scfg.get('silence_timeout', 15.0)))
+        silence_row = self._action_row('Sensor Silence Floor (seconds)', 'Prevents false standby triggers while sitting still.')
         silence_row.add_suffix(self.silence_spin)
         tuning.add(silence_row)
 
         self.confirm_reports_spin = Gtk.SpinButton.new_with_range(1, 5, 1)
         self.confirm_reports_spin.set_value(int(self.scfg.get('present_confirm_reports', 1)))
-        confirm_row = self._action_row(
-            'Approach Confirmation Packets',
-            'Number of consecutive ToF reports required to immediately wake screen (Recommended: 1).'
-        )
+        confirm_row = self._action_row('Approach Confirmation Packets', 'Consecutive reports needed to wake panel.')
         confirm_row.add_suffix(self.confirm_reports_spin)
         tuning.add(confirm_row)
 
         self.away_delay_spin = Gtk.SpinButton.new_with_range(3, 120, 1)
-        self.away_delay_spin.set_value(int(self.pcfg.get('away_delay', 10)))
-        delay_row = self._action_row(
-            'Departure Grace Delay (seconds)',
-            'Grace period after user departs (> 1.2m) before powering down display.'
-        )
+        self.away_delay_spin.set_value(int(self.pcfg.get('away_delay', 20)))
+        delay_row = self._action_row('Departure Grace Delay (seconds)', 'Grace period after leaving &gt; 1.2m range.')
         delay_row.add_suffix(self.away_delay_spin)
         tuning.add(delay_row)
 
         self.presence_switches = {}
         for key, title, sub, defval in [
-            ('wake_on_approach', 'Instant Wake on Approach', 'Powers up the OLED panel the instant you approach your desk.', True),
-            ('screen_off_on_away', 'Turn Screen Off on Departure', 'Powers down pixels when you step beyond 1.2m to maximize battery.', True),
-            ('inhibit_on_media', 'Inhibit Screen Off During Media Playback', 'Prevents screen-off while watching videos, movies or listening to media.', True),
-            ('lock_on_away', 'Lock Session on Departure', 'Secures the GNOME desktop session immediately upon departure.', False),
+            ('wake_on_approach', 'Instant Wake on Approach', 'Wakes panel the moment you return to your desk.', True),
+            ('screen_off_on_away', 'Turn Screen Off on Departure', 'Powers down display pixels when stepping away.', True),
+            ('inhibit_on_media', 'Inhibit Screen Off During Media Playback', 'Respects MPRIS, session inhibitors, and PipeWire PCM streams.', True),
+            ('lock_on_away', 'Lock Session on Departure', 'Secures GNOME session automatically on departure.', False),
         ]:
             sw = SwitchRowCls(title=title, subtitle=sub)
             sw.set_active(bool(self.pcfg.get(key, defval)))
@@ -651,7 +748,7 @@ class MainWindow(Adw.ApplicationWindow):
         save_btn.add_css_class('suggested-action')
         save_btn.add_css_class('pill-btn')
         save_btn.connect('clicked', self._save_presence)
-        save_row = self._action_row('Apply Display &amp; Presence Configuration', 'Saves settings and updates background hardware services.')
+        save_row = self._action_row('Apply Display &amp; Presence Configuration', 'Updates session settings and hardware services.')
         save_row.add_suffix(save_btn)
         save_group.add(save_row)
 
@@ -664,8 +761,8 @@ class MainWindow(Adw.ApplicationWindow):
         rows = [
             ('Power Apply Engine', 'ff-power-apply.service', False),
             ('ToF Presence Sensor Daemon (Native C/ASM)', SYSTEM_SENSOR, False),
-            ('GNOME Session Presence &amp; Screen Manager', USER_PRESENCE, True),
-            ('Auto Dynamic Boost &amp; GameMode Engine', AUTOBOOST_SERVICE, False),
+            ('Session Presence &amp; Display Manager', USER_PRESENCE, True),
+            ('Auto Dynamic Boost &amp; Telemetry Watcher', AUTOBOOST_SERVICE, False),
         ]
         self.diag_rows = []
         for title, unit, user in rows:
@@ -675,7 +772,6 @@ class MainWindow(Adw.ApplicationWindow):
             group.add(row)
             self.diag_rows.append(row)
 
-        # Hardware Residency & Kernel Audit (ffctl doctor)
         audit_grp = Adw.PreferencesGroup(
             title='Hardware &amp; Power Residency Audit (ffctl doctor)',
             description='Live kernel verification for S0ix sleep guard, ACPI wakeups, PCI Runtime PM, and daemon conflicts.'
@@ -684,6 +780,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.audit_rows = {}
         for key, label in [
             ('sleep', 'Suspend &amp; s2idle Wakeup Guard'),
+            ('sleep_report', 'Last Suspend Energy Report (ff-sleep-guard)'),
             ('cpu_driver', 'CPU Scaling Driver &amp; Active EPP'),
             ('pci_pm', 'PCI Runtime Power Management &amp; ASPM'),
             ('conflicts', 'Daemon Conflict Check (tlp / auto-cpufreq)'),
@@ -695,7 +792,7 @@ class MainWindow(Adw.ApplicationWindow):
         audit_btn = Gtk.Button(label='Run Audit Now', valign=Gtk.Align.CENTER)
         audit_btn.add_css_class('pill-btn')
         audit_btn.connect('clicked', lambda *_: (self._refresh_doctor_audit(), self.toast('Hardware residency audit updated.')))
-        audit_action_row = self._action_row('Re-run Kernel &amp; PCI Residency Check', 'Executes native ffctl doctor --json probe in < 2 ms.')
+        audit_action_row = self._action_row('Re-run Kernel &amp; PCI Residency Check', 'Executes native ffctl doctor --json probe in &lt; 2 ms.')
         audit_action_row.add_suffix(audit_btn)
         audit_grp.add(audit_action_row)
 
@@ -703,7 +800,7 @@ class MainWindow(Adw.ApplicationWindow):
         page.add(safety)
         reset = self._action_row(
             'Reset to Recommended Factory Defaults',
-            'Restores all power profiles and ToF sensor thresholds to tested optimum defaults.'
+            'Restores balanced power profiles and sensor defaults cleanly.'
         )
         b = Gtk.Button(label='Reset', valign=Gtk.Align.CENTER)
         b.add_css_class('destructive-action')
@@ -717,8 +814,112 @@ class MainWindow(Adw.ApplicationWindow):
         self.refresh_status()
         return GLib.SOURCE_CONTINUE
 
+    def _quick_apply_profile(self, _btn, target: str) -> None:
+        ffctl_bin = '/usr/local/bin/ffctl' if os.path.exists('/usr/local/bin/ffctl') else './ffctl'
+        cmd = [ffctl_bin, 'apply'] if target == 'auto' else [ffctl_bin, 'apply', target]
+
+        def _worker():
+            rc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+            def _done():
+                self.refresh_status()
+                self.toast(f"✓ Applied '{target}' profile." if rc == 0 else f"Apply exited with code {rc}.")
+                return GLib.SOURCE_REMOVE
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _run_blame_async(self) -> None:
+        if self._blame_busy:
+            return
+        self._blame_busy = True
+        ffctl_bin = '/usr/local/bin/ffctl' if os.path.exists('/usr/local/bin/ffctl') else './ffctl'
+
+        def _worker():
+            data = None
+            try:
+                out = subprocess.check_output([ffctl_bin, 'blame', '--json'], text=True, stderr=subprocess.DEVNULL, timeout=3.0)
+                data = json.loads(out)
+            except Exception:
+                data = None
+
+            def _apply_ui():
+                self._blame_busy = False
+                if not hasattr(self, 'blame_proc_rows'):
+                    return GLib.SOURCE_REMOVE
+                if not data:
+                    self.blame_proc_rows[0].set_title('Blame profiler unavailable')
+                    self.blame_proc_rows[0].set_subtitle('Ensure ffctl binary is compiled/installed.')
+                    return GLib.SOURCE_REMOVE
+
+                procs = data.get('processes', [])
+                for idx, row in enumerate(self.blame_proc_rows):
+                    if idx < len(procs):
+                        pr = procs[idx]
+                        row.set_title(f"#{idx + 1} {pr.get('name', '?')} (PID {pr.get('pid', 0)})")
+                        row.set_subtitle(f"CPU: {pr.get('cpu_pct', 0.0):.1f}%  •  Wakeups: {pr.get('wakeups_per_sec', 0.0):.1f}/sec")
+                    else:
+                        row.set_title(f'#{idx + 1} Idle')
+                        row.set_subtitle('No additional active wakeup processes in window.')
+
+                pci = data.get('active_pci', [])
+                usb = data.get('active_usb', [])
+                pci_txt = ', '.join(f"{d.get('slot', '')} ({d.get('driver', '').split()[0]})" for d in pci[:6]) or 'All suspended'
+                usb_txt = ', '.join(f"{d.get('port', '')}: {d.get('product', '')}" for d in usb[:5]) or 'All autosuspended'
+                self.blame_pci_row.set_subtitle(f"{len(pci)} active: {pci_txt}")
+                self.blame_usb_row.set_subtitle(f"{len(usb)} active: {usb_txt}")
+                return GLib.SOURCE_REMOVE
+
+            GLib.idle_add(_apply_ui)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def refresh_status(self) -> None:
         s = status_snapshot()
+        temp_c = _read_pkg_temp_c()
+        watts_val = s.get('watts')
+        bat_pct = s.get('battery_percent')
+        health = s.get('battery_health', {}) or {}
+        mode_lbl = 'Battery' if s.get('mode') == 'battery' else 'AC Mains'
+
+        # Update Hero Deck
+        self.hero_watts.set_label('-- W' if watts_val is None else f"{watts_val:.1f} W")
+        self.hero_watts_sub.set_label(f"{mode_lbl} • {s.get('refresh_rate', 'Adaptive')}")
+        self.hero_temp.set_label(f"{temp_c}°C" if temp_c > 0 else '—°C')
+        self.hero_temp_sub.set_label(f"EPP: {s.get('epp') or '—'}")
+        self.hero_bat.set_label(f"{bat_pct}%" if bat_pct is not None else '—%')
+        hpct = health.get('health_pct', 100.0)
+        cyc = health.get('cycle_count', 0)
+        self.hero_bat_sub.set_label(f"Health {hpct:.1f}% • {cyc} cycles")
+
+        # Update Sleep Card
+        try:
+            if SLEEP_FILE.exists():
+                sl = json.loads(SLEEP_FILE.read_text(encoding='utf-8'))
+                dur_m = int(sl.get('duration_sec', 0)) // 60
+                self.hero_sleep.set_label(f"{sl.get('avg_watts', 0.0):.2f} W")
+                self.hero_sleep_sub.set_label(f"{dur_m}m • {sl.get('pct_per_hour', 0.0):.2f}%/hr ({sl.get('sleep_mode', 's2idle')})")
+        except Exception:
+            pass
+
+        # Update Live Sparkline Chart (prefer daemon ring buffer, fall back to GUI rolling buffer)
+        samples = []
+        try:
+            if HIST_FILE.exists():
+                parsed = json.loads(HIST_FILE.read_text(encoding='utf-8'))
+                if isinstance(parsed, list) and len(parsed) >= 2:
+                    samples = parsed
+        except Exception:
+            pass
+        if not samples:
+            self._local_samples.append({
+                'ts': int(time.time()),
+                'watts': float(watts_val) if watts_val is not None else 0.0,
+                'temp_c': int(temp_c),
+            })
+            samples = list(self._local_samples)
+        if hasattr(self, 'chart'):
+            self.chart.set_samples(samples)
+
         presence_map = {
             'present': 'User Present (At Desk)',
             'absent': 'User Away (Standby Mode)',
@@ -730,12 +931,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         values = {
             'mode': 'Battery (Discharging)' if s['mode'] == 'battery' else 'AC Power (Mains Online)',
-            'watts': '—' if s['watts'] is None else f"{s['watts']:.2f} W",
-            'battery_percent': '—' if s['battery_percent'] is None else f"{s['battery_percent']}%",
             'cpu_topology': s.get('cpu_topology', 'Dynamic Online'),
             'refresh_rate': s.get('refresh_rate', '—'),
             'gnome_profile': s['gnome_profile'] or '—',
-            'epp': s['epp'] or '—',
             'turbo': 'Enabled (Dynamic Boost)' if s['turbo'] else ('Disabled' if s['turbo'] is not None else '—'),
             'pcie_aspm': s.get('pcie_aspm', '—'),
             'gpu_perf': s.get('gpu_perf', '—'),
@@ -747,7 +945,6 @@ class MainWindow(Adw.ApplicationWindow):
             if hasattr(self, 'rows') and key in self.rows:
                 self.rows[key].set_subtitle(value)
 
-        # Update Live ToF Radar from sensor_telemetry.json
         tel = load_sensor_telemetry()
         if tel and hasattr(self, 'tof_status_row'):
             st = tel.get('state', 'unknown')
@@ -757,29 +954,25 @@ class MainWindow(Adw.ApplicationWindow):
             sec_ago = tel.get('last_packet_sec_ago', 0.0)
 
             if st == 'present':
-                self.tof_badge.set_label('AT DESK (ACTIVE)')
+                self.tof_badge.set_label('AT DESK')
                 self.tof_badge.set_css_classes(['badge-active'])
-                self.tof_status_row.set_subtitle('User detected at desk (OLED Active)')
+                self.tof_status_row.set_subtitle('User detected at desk')
             elif st == 'absent':
-                self.tof_badge.set_label('AWAY (STANDBY)')
+                self.tof_badge.set_label('AWAY')
                 self.tof_badge.set_css_classes(['badge-standby'])
-                self.tof_status_row.set_subtitle('User departed (> 1.2m threshold)')
+                self.tof_status_row.set_subtitle('User departed (&gt; 1.2m threshold)')
             else:
-                self.tof_badge.set_label('DISABLED')
+                self.tof_badge.set_label('OFFLINE')
                 self.tof_badge.set_css_classes(['badge-disabled'])
-                self.tof_status_row.set_subtitle('Sensor offline or standby')
+                self.tof_status_row.set_subtitle('Sensor offline or unavailable')
 
-            # Update Distance & ProgressBar
             self.tof_distance_row.set_subtitle(f"{dist_cm} cm / {thresh_cm} cm (1.2m Threshold)")
             frac = min(1.0, max(0.0, dist_cm / thresh_cm)) if thresh_cm > 0 else 0.5
             self.tof_bar.set_fraction(frac)
-
-            # Update Telemetry packet stream
             self.tof_telemetry_row.set_subtitle(f"{pkts} packets received ({sec_ago:.1f}s ago) • Native ASM Engine")
         elif hasattr(self, 'tof_status_row'):
             self.tof_status_row.set_subtitle(presence_map.get(raw_pres, raw_pres))
 
-        # Update Lenovo Switches
         lenovo = s.get('lenovo', {})
         if lenovo and hasattr(self, 'lenovo_cm_row'):
             self._lenovo_syncing = True
@@ -791,24 +984,6 @@ class MainWindow(Adw.ApplicationWindow):
                 self.lenovo_usb_row.set_active(bool(lenovo['usb_charging']))
             self._lenovo_syncing = False
 
-        # Update Battery Health Card
-        health = s.get('battery_health', {})
-        if health and hasattr(self, 'health_rows'):
-            score = health.get('health_pct', 100.0)
-            self.health_rows['health_score'].set_subtitle(
-                f"{score:.1f}% Health Score ({'Optimal' if score >= 90 else 'Degraded'})"
-            )
-            d_wh = health.get('energy_design_wh', 0.0)
-            f_wh = health.get('energy_full_wh', 0.0)
-            self.health_rows['capacities'].set_subtitle(f"Design: {d_wh:.2f} Wh  |  Full Charge: {f_wh:.2f} Wh")
-            cycles = health.get('cycle_count', 0)
-            self.health_rows['cycles'].set_subtitle(f"{cycles} charge cycles completed")
-            vol = health.get('voltage_v', 0.0)
-            tech = health.get('technology', 'Li-poly')
-            mfg = health.get('manufacturer', 'ATL')
-            self.health_rows['voltage'].set_subtitle(f"{vol:.2f} V ({mfg} {tech})")
-
-        # Update Diagnostics Services Status
         if hasattr(self, 'diag_rows'):
             for row in self.diag_rows:
                 row.set_subtitle('Running (Active)' if is_active(row._unit, row._user) else 'Stopped (Inactive)')
@@ -830,6 +1005,16 @@ class MainWindow(Adw.ApplicationWindow):
         self.audit_rows['sleep'].set_subtitle(
             f"Mode: {d.get('mem_sleep', 'unknown')} | Sleep Guard: {guard} | {d.get('acpi_non_lid_wakeups_enabled', 0)} ACPI wake triggers"
         )
+        try:
+            sl = json.loads(SLEEP_FILE.read_text(encoding='utf-8')) if SLEEP_FILE.exists() else None
+            if sl:
+                self.audit_rows['sleep_report'].set_subtitle(
+                    f"Last sleep: {sl.get('duration_sec', 0) // 60}m • {sl.get('wh_used', 0.0):.3f} Wh ({sl.get('avg_watts', 0.0):.2f} W / {sl.get('pct_per_hour', 0.0):.2f}%/hr)"
+                )
+            else:
+                self.audit_rows['sleep_report'].set_subtitle('No suspend cycle recorded yet (captured automatically after sleep).')
+        except Exception:
+            pass
         self.audit_rows['cpu_driver'].set_subtitle(
             f"Driver: {d.get('scaling_driver', '—')} | EPP: {d.get('epp', '—')}"
         )
@@ -853,7 +1038,7 @@ class MainWindow(Adw.ApplicationWindow):
             set_lenovo_feature(feat, val)
         self.refresh_status()
         feat_name = feat.replace('_', ' ').title()
-        self.toast(f"✓ Lenovo {feat_name} set to {'ON' if active else 'OFF'}.")
+        self.toast(f"✓ {feat_name} set to {'ON' if active else 'OFF'}.")
 
     def _toggle_autoboost(self, row, _pspec) -> None:
         active = row.get_active()
@@ -867,14 +1052,6 @@ class MainWindow(Adw.ApplicationWindow):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.refresh_status()
         self.toast(f"✓ Auto Dynamic Boost {'enabled' if active else 'disabled'}.")
-
-    def _apply_now(self, _btn) -> None:
-        try:
-            save_and_apply_config(self.cfg)
-            self.refresh_status()
-            self.toast('✓ Active power profile applied and hardware registers verified.')
-        except Exception as exc:
-            self.toast(f'Apply error: {exc}')
 
     def _apply_preset(self, _btn, mode: str, name: str) -> None:
         preset = PRESETS.get(mode, {}).get(name)
@@ -891,13 +1068,11 @@ class MainWindow(Adw.ApplicationWindow):
             elif isinstance(row, SwitchRowCls):
                 row.set_active(bool(v))
         mode_label = 'Battery' if mode == 'battery' else 'AC Power'
-
-        # Directly save and apply the chosen preset to hardware
         self.cfg[mode].update(preset)
         try:
             save_and_apply_config(self.cfg)
             self.refresh_status()
-            self.toast(f'✓ {mode_label} preset "{name.replace("_", " ").title()}" applied to hardware.')
+            self.toast(f'✓ {mode_label} preset "{name.replace("_", " ").title()}" applied.')
         except Exception as exc:
             self.toast(f'Preset error: {exc}')
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import re
+import shutil
 import signal
 import subprocess
 
@@ -444,6 +447,69 @@ class PresenceController:
                 (RUN_DIR / 'refresh.rate').write_text(label_str)
             except Exception:
                 pass
+        except Exception:
+            if os.environ.get('HYPRLAND_INSTANCE_SIGNATURE') and shutil.which('hyprctl'):
+                self._apply_refresh_hyprland(want_60hz)
+            elif (os.environ.get('KDE_FULL_SESSION') or 'kde' in os.environ.get('XDG_CURRENT_DESKTOP', '').lower()) and shutil.which('kscreen-doctor'):
+                self._apply_refresh_kde(want_60hz)
+
+    def _apply_refresh_hyprland(self, want_60hz: bool) -> None:
+        try:
+            raw = subprocess.check_output(['hyprctl', 'monitors', '-j'], text=True, timeout=1.5)
+            mons = json.loads(raw)
+            if not mons:
+                return
+            mon = mons[0]
+            name = mon.get('name', 'eDP-1')
+            w = int(mon.get('width', 1920))
+            h = int(mon.get('height', 1080))
+            scale = mon.get('scale', 1)
+            modes = mon.get('availableModes', [])
+            rates = []
+            for ms in modes:
+                m = re.match(rf'^{w}x{h}@([0-9]+(?:\.[0-9]+)?)Hz', str(ms))
+                if m:
+                    rates.append(float(m.group(1)))
+            if not rates:
+                return
+            low_hz = min((r for r in rates if 58.0 <= r <= 62.0), default=min(rates))
+            high_hz = max(rates)
+            target = low_hz if want_60hz else high_hz
+            subprocess.run(
+                ['hyprctl', 'keyword', 'monitor', f'{name},{w}x{h}@{target:.0f},auto,{scale}'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=1.5,
+            )
+            label_str = '60 Hz (Power Saver)' if want_60hz else f'{int(round(high_hz))} Hz (Hyprland ARR)'
+            (RUN_DIR / 'refresh.rate').write_text(label_str)
+        except Exception:
+            pass
+
+    def _apply_refresh_kde(self, want_60hz: bool) -> None:
+        try:
+            out = subprocess.check_output(['kscreen-doctor', '-o'], text=True, stderr=subprocess.DEVNULL, timeout=1.5)
+            out_name = None
+            best_low = (None, 999.0)
+            best_high = (None, 0.0)
+            for line in out.splitlines():
+                line_s = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
+                if line_s.startswith('Output:'):
+                    parts = line_s.split()
+                    if len(parts) >= 3:
+                        out_name = parts[2]
+                    continue
+                if 'Modes:' in line_s or re.search(r'\b\d+:\d+x\d+@\d+', line_s):
+                    for mid, hz_s in re.findall(r'(\d+):\d+x\d+@(\d+(?:\.\d+)?)', line_s):
+                        hz = float(hz_s)
+                        if 58.0 <= hz <= 62.0 and hz < best_low[1]:
+                            best_low = (mid, hz)
+                        if hz > best_high[1]:
+                            best_high = (mid, hz)
+            target_id = best_low[0] if want_60hz else best_high[0]
+            if out_name and target_id:
+                subprocess.run(['kscreen-doctor', f'output.{out_name}.mode.{target_id}'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=1.5)
+                label_str = '60 Hz (Power Saver)' if want_60hz else f'{int(round(best_high[1]))} Hz (Plasma ARR)'
+                (RUN_DIR / 'refresh.rate').write_text(label_str)
         except Exception:
             pass
 

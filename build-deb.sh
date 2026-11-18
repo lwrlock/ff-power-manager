@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-VER="2.1.0"
+VER="2.2.0"
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 PKG="ff-power-manager_${VER}_${ARCH}"
 STAGE="$ROOT/.stage/$PKG"
@@ -23,7 +23,9 @@ mkdir -p "$STAGE/etc/udev/rules.d"
 mkdir -p "$STAGE/usr/share/polkit-1/actions"
 mkdir -p "$STAGE/etc/polkit-1/rules.d"
 mkdir -p "$STAGE/usr/local/share/applications"
+mkdir -p "$STAGE/usr/share/icons/hicolor/scalable/apps"
 mkdir -p "$STAGE/usr/share/ff-power-manager/gnome-extension"
+mkdir -p "$STAGE/var/lib/ff-power-manager"
 
 install -m755 "$ROOT/ffctl" "$STAGE/usr/local/bin/ffctl"
 install -m755 "$ROOT/ff-tui" "$STAGE/usr/local/bin/ff-tui"
@@ -54,6 +56,7 @@ install -m644 "$ROOT/polkit/com.ff.powermanager.policy" "$STAGE/usr/share/polkit
 install -m644 "$ROOT/polkit/50-ff-power-manager.rules" "$STAGE/etc/polkit-1/rules.d/"
 install -m644 "$ROOT/applications/com.ff.PowerManager.desktop" "$STAGE/usr/local/share/applications/"
 install -m644 "$ROOT/applications/com.ff.PowerManager.TUI.desktop" "$STAGE/usr/local/share/applications/"
+install -m644 "$ROOT/applications/ff-power-manager.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/ff-power-manager.svg"
 cp -a "$ROOT"/gnome-extension/ff-power-indicator@furkan.github.io/* "$STAGE/usr/share/ff-power-manager/gnome-extension/"
 
 cat > "$STAGE/DEBIAN/control" <<EOF

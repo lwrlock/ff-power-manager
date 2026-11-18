@@ -1,6 +1,28 @@
 #!/bin/sh
-# FF Power Manager v2.0: Universal s2idle Backpack Battery Drain Guard
+# FF Power Manager v2.2: s2idle Wakeup Guard & Suspend Drain Tracker
 STATE_DIR="/run/ff-power-manager/sleep-guard"
+VAR_DIR="/var/lib/ff-power-manager"
+
+find_bat() {
+    for d in /sys/class/power_supply/BAT*; do
+        [ -d "$d" ] && echo "$d" && return 0
+    done
+    return 1
+}
+
+read_energy_uwh() {
+    bat="$1"
+    if [ -r "$bat/energy_now" ]; then
+        cat "$bat/energy_now" 2>/dev/null || echo 0
+    elif [ -r "$bat/charge_now" ] && [ -r "$bat/voltage_now" ]; then
+        awk -v c="$(cat "$bat/charge_now" 2>/dev/null || echo 0)" \
+            -v v="$(cat "$bat/voltage_now" 2>/dev/null || echo 0)" \
+            'BEGIN { printf "%.0f", (c * v) / 1000000.0 }'
+    else
+        echo 0
+    fi
+}
+
 case "$1" in
     pre)
         mkdir -p "$STATE_DIR"
@@ -16,6 +38,20 @@ case "$1" in
         for iface in $(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}'); do
             iw dev "$iface" set power_save on 2>/dev/null || true
         done
+
+        BAT="$(find_bat || true)"
+        if [ -n "$BAT" ]; then
+            NOW_TS="$(date +%s 2>/dev/null || echo 0)"
+            ENERGY_UWH="$(read_energy_uwh "$BAT")"
+            CAP_PCT="$(cat "$BAT/capacity" 2>/dev/null || echo 0)"
+            MEM_MODE="$(grep -o '\[[^]]*\]' /sys/power/mem_sleep 2>/dev/null | tr -d '[]' | head -n1)"
+            cat > "$STATE_DIR/sleep_pre" <<EOF
+PRE_TS=$NOW_TS
+PRE_ENERGY=$ENERGY_UWH
+PRE_CAP=$CAP_PCT
+PRE_MODE=${MEM_MODE:-s2idle}
+EOF
+        fi
         ;;
     post)
         if [ -f "$STATE_DIR/disabled_wakeups" ]; then
@@ -24,6 +60,58 @@ case "$1" in
             done < "$STATE_DIR/disabled_wakeups"
             rm -f "$STATE_DIR/disabled_wakeups"
         fi
+
+        if [ -f "$STATE_DIR/sleep_pre" ]; then
+            PRE_TS=0; PRE_ENERGY=0; PRE_CAP=0; PRE_MODE="s2idle"
+            # shellcheck disable=SC1090
+            . "$STATE_DIR/sleep_pre" 2>/dev/null || true
+            rm -f "$STATE_DIR/sleep_pre"
+
+            BAT="$(find_bat || true)"
+            POST_TS="$(date +%s 2>/dev/null || echo 0)"
+            if [ -n "$BAT" ] && [ "$PRE_TS" -gt 0 ] && [ "$POST_TS" -gt "$PRE_TS" ]; then
+                POST_ENERGY="$(read_energy_uwh "$BAT")"
+                POST_CAP="$(cat "$BAT/capacity" 2>/dev/null || echo 0)"
+                DUR=$((POST_TS - PRE_TS))
+                mkdir -p "$VAR_DIR"
+                STATS="$(awk -v dt="$DUR" -v e0="$PRE_ENERGY" -v e1="$POST_ENERGY" -v c0="$PRE_CAP" -v c1="$POST_CAP" '
+                BEGIN {
+                    hrs = dt / 3600.0;
+                    d_uwh = (e0 > e1) ? (e0 - e1) : 0;
+                    wh = d_uwh / 1000000.0;
+                    watts = (hrs > 0.001) ? (wh / hrs) : 0.0;
+                    dpct = (c0 > c1) ? (c0 - c1) : 0;
+                    pct_hr = (hrs > 0.001) ? (dpct / hrs) : 0.0;
+                    printf "%.3f %.2f %d %.2f", wh, watts, dpct, pct_hr;
+                }')"
+                WH_USED="$(echo "$STATS" | awk '{print $1}')"
+                WATTS_AVG="$(echo "$STATS" | awk '{print $2}')"
+                PCT_LOST="$(echo "$STATS" | awk '{print $3}')"
+                PCT_HR="$(echo "$STATS" | awk '{print $4}')"
+                cat > "$VAR_DIR/last_sleep.json" <<EOF
+{
+  "timestamp": $POST_TS,
+  "duration_sec": $DUR,
+  "sleep_mode": "$PRE_MODE",
+  "energy_start_wh": $(awk -v e="$PRE_ENERGY" 'BEGIN{printf "%.2f", e/1000000.0}'),
+  "energy_end_wh": $(awk -v e="$POST_ENERGY" 'BEGIN{printf "%.2f", e/1000000.0}'),
+  "wh_used": $WH_USED,
+  "avg_watts": $WATTS_AVG,
+  "pct_start": $PRE_CAP,
+  "pct_end": $POST_CAP,
+  "pct_lost": $PCT_LOST,
+  "pct_per_hour": $PCT_HR
+}
+EOF
+                chmod 0644 "$VAR_DIR/last_sleep.json"
+                printf '{"ts":%d,"duration_sec":%d,"mode":"%s","wh_used":%s,"avg_watts":%s,"pct_lost":%s,"pct_per_hour":%s}\n' \
+                    "$POST_TS" "$DUR" "$PRE_MODE" "$WH_USED" "$WATTS_AVG" "$PCT_LOST" "$PCT_HR" >> "$VAR_DIR/sleep_history.jsonl"
+                tail -n 30 "$VAR_DIR/sleep_history.jsonl" > "$VAR_DIR/sleep_history.tmp" 2>/dev/null && \
+                    mv "$VAR_DIR/sleep_history.tmp" "$VAR_DIR/sleep_history.jsonl" && \
+                    chmod 0644 "$VAR_DIR/sleep_history.jsonl"
+            fi
+        fi
+
         /usr/local/lib/ff-power-manager/ff-power-helper apply >/dev/null 2>&1 || true
         ;;
 esac

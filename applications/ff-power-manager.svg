@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <radialGradient id="bg" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#4c1d95"/>
+      <stop offset="55%" stop-color="#1e103c"/>
+      <stop offset="100%" stop-color="#090414"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#c084fc" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0.7"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="55%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)" stroke="#a855f7" stroke-opacity="0.45" stroke-width="2.5"/>
+  <circle cx="96" cy="30" r="3" fill="#e9d5ff" opacity="0.85"/>
+  <circle cx="28" cy="96" r="2.2" fill="#38bdf8" opacity="0.8"/>
+  <circle cx="100" cy="94" r="1.8" fill="#f0abfc" opacity="0.7"/>
+  <ellipse cx="64" cy="66" rx="46" ry="15" transform="rotate(-24 64 66)" fill="none" stroke="url(#ring)" stroke-width="4.5" opacity="0.75"/>
+  <circle cx="64" cy="64" r="26" fill="#2e1065" stroke="#c084fc" stroke-opacity="0.55" stroke-width="1.5"/>
+  <path d="M68 41 L51 67 H63 L59 87 L77 60 H65 Z" fill="url(#bolt)"/>
+</svg>

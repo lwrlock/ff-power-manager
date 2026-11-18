@@ -27,9 +27,11 @@ sudo install -d -m755 \
   /usr/local/lib/ff-power-manager/fpm \
   /usr/local/bin /usr/local/sbin \
   /usr/local/share/applications /usr/local/share/metainfo \
+  /usr/share/icons/hicolor/scalable/apps \
   /usr/local/lib/systemd/user /etc/systemd/system /etc/udev/rules.d \
   /usr/share/polkit-1/actions /etc/polkit-1/rules.d \
-  /usr/share/gnome-shell/extensions
+  /usr/share/gnome-shell/extensions \
+  /var/lib/ff-power-manager
 
 # Secure admin group access to /etc/ff-power-manager
 sudo install -d -m2775 -g "$ADMIN_GROUP" /etc/ff-power-manager
@@ -127,6 +129,8 @@ sudo install -m644 udev/90-ff-power-manager.rules /etc/udev/rules.d/
 sudo install -m644 applications/com.ff.PowerManager.desktop /usr/local/share/applications/
 sudo install -m644 applications/com.ff.PowerManager.TUI.desktop /usr/local/share/applications/
 sudo install -m644 applications/com.ff.PowerManager.metainfo.xml /usr/local/share/metainfo/
+sudo install -m644 applications/ff-power-manager.svg /usr/share/icons/hicolor/scalable/apps/ff-power-manager.svg
+sudo gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
 sudo update-desktop-database /usr/local/share/applications/ 2>/dev/null || true
 
 # Install GNOME Top Bar Quick Power Indicator Extension
@@ -241,11 +245,13 @@ fi
 
 step '10/10' 'Complete'
 echo '==================================================================='
-echo '  FF Power Manager (v2.1.0 - Universal Linux & C/ASM Engine) Ready!'
+echo '  FF Power Manager (v2.2.0 - Universal Linux & C/ASM Engine) Ready!'
 echo '==================================================================='
 echo '  ✓ Terminal Dashboard      : ff-tui  (or ffctl tui)'
 echo '  ✓ Hardware Power Status   : ffctl status [--json]'
 echo '  ✓ Hardware Residency Audit: ffctl doctor [--json]'
+echo '  ✓ Energy Wakeup Profiler  : ffctl blame [--json]'
+echo '  ✓ Suspend Drain Telemetry : ffctl sleep-report [--json]'
 echo '  ✓ Battery Health Report   : ffctl health [--json]'
 echo '  ✓ Lenovo IdeaPad Control  : ffctl lenovo'
 echo '  ✓ Live ToF Radar Stream   : ffctl sensor live'
