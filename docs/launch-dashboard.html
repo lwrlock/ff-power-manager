@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FF Power Manager v2.0 — One-Click Launch & Lenovo Outreach</title>
+  <style>
+    :root { --bg:#0b0d12; --card:#141821; --border:rgba(255,255,255,0.1); --text:#f1f5f9; --muted:#94a3b8; --accent:#38bdf8; --green:#22c55e; }
+    body { margin:0; font-family:Inter,system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); padding:32px; line-height:1.5; }
+    .wrap { max-width:900px; margin:0 auto; }
+    h1 { font-size:26px; margin:0 0 6px; }
+    p.sub { color:var(--muted); margin:0 0 24px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; display:flex; flex-direction:column; justify-content:space-between; }
+    .card h2 { font-size:16px; margin:0 0 8px; }
+    .card p { font-size:13px; color:var(--muted); margin:0 0 14px; }
+    a.btn, button.btn { display:inline-block; text-decoration:none; text-align:center; background:var(--accent); color:#04121d; font-weight:600; font-size:13px; padding:10px 14px; border-radius:10px; border:none; cursor:pointer; }
+    a.btn.lenovo { background:var(--green); color:#03190b; }
+    pre { background:#07090d; border:1px solid var(--border); border-radius:10px; padding:14px; font-size:12px; overflow:auto; color:#cbd5e1; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FF Power Manager v2.0 — Launchpad &amp; Lenovo Outreach</h1>
+  <p class="sub">Each button opens the target platform in your default browser with the recipient, title, and message pre-filled.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>1. Email Lenovo Linux Lead (Gmail)</h2>
+      <p>Sends technical collaboration &amp; VL53L1 ToF + ProMotion proposal to Mark Pearson (<code>mpearson@lenovo.com</code>, <code>mpearson-lenovo@squebb.ca</code>).</p>
+      <a class="btn lenovo" target="_blank" id="gmailLink">Open Pre-filled Gmail Draft</a>
+    </div>
+    <div class="card">
+      <h2>2. Hacker News (Show HN)</h2>
+      <p>Pre-filled Show HN submission pointing directly to <code>github.com/lwrlock/ff-power-manager</code>.</p>
+      <a class="btn" target="_blank" id="hnLink">Submit Show HN</a>
+    </div>
+    <div class="card">
+      <h2>3. Reddit — r/linux</h2>
+      <p>Pre-filled link/text submission for the main Linux desktop community.</p>
+      <a class="btn" target="_blank" id="rLinuxLink">Post to r/linux</a>
+    </div>
+    <div class="card">
+      <h2>4. Reddit — r/Lenovo &amp; r/thinkpad</h2>
+      <p>Targeted hardware communities that care deeply about IdeaPad/ThinkPad power &amp; s2idle sleep.</p>
+      <a class="btn" target="_blank" id="rLenovoLink">Post to r/Lenovo</a>
+    </div>
+    <div class="card">
+      <h2>5. Reddit — r/Ubuntu</h2>
+      <p>Highlights the native <code>.deb</code> installer and GNOME Shell Wayland ProMotion UX.</p>
+      <a class="btn" target="_blank" id="rUbuntuLink">Post to r/Ubuntu</a>
+    </div>
+    <div class="card">
+      <h2>6. X (Twitter) &amp; LinkedIn</h2>
+      <p>Pre-filled launch tweet linking the public repository &amp; release page.</p>
+      <a class="btn" target="_blank" id="xLink">Post on X (Twitter)</a>
+    </div>
+  </div>
+
+  <h2 style="margin-top:28px;">Lenovo Email Text (One-Click Copy)</h2>
+  <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('lenovoBody').innerText)">Copy Email Body</button>
+  <pre id="lenovoBody">Hi Mark,
+
+I hope you are doing well. My name is Furkan (lwrlock on GitHub), a 17-year-old Computer Engineering student running Ubuntu/Fedora on a Lenovo IdeaPad Pro 5 14IAH10 (83JK - Intel Core Ultra 9 285H, Intel Arc Graphics, 2.8K 120Hz OLED, Intel ISH ST VL53L1 ToF Sensor).
+
+I built and open-sourced FF Power Manager v2.0 (MIT License) to solve several power, thermal, and display gaps on modern Lenovo laptops under Linux/GNOME Wayland, and I would love to share the findings and help contribute toward official Lenovo Linux support:
+
+1. Intel ISH ToF Human-Presence Sensor (HID_ID=001F:00008087:00000AC2 / ST VL53L1): Zero-overhead C &amp; x86_64 Assembly parser for the 35-byte Report 4 mm format (&lt;1 MB RAM, 0.0% CPU), integrated with Mutter DPMS OFF &amp; MPRIS/PipeWire media inhibition.
+2. Battery-Only ProMotion (60 &lt;-&gt; 120 Hz): Event-driven Mutter.IdleMonitor (AddIdleWatch + AddUserActiveWatch) dropping to 60Hz after 8s idle only on battery and waking at 0ms on input.
+3. IdeaPad ACPI (VPC2004:00) + Hybrid Topology: conservation_mode (+ One-Shot 100% Charge Watchdog), fn_lock, usb_charging, platform_profile, non-hotplug P/E/LP-E EPP &amp; Intel Xe GuC SLPC tuning.
+4. s2idle Backpack Drain Guard: systemd-sleep hook suppressing spurious XHCI/TXHC/TDM0/TRP0/TRP1 wakeups during suspend.
+
+GitHub: https://github.com/lwrlock/ff-power-manager
+Release v2.0.0 (.deb): https://github.com/lwrlock/ff-power-manager/releases/tag/v2.0.0
+
+I would be honored to help test patches, share HID/ACPI dumps from 14IAH10, or assist in upstreaming any of this work.
+
+Best regards,
+Furkan (lwrlock)
+https://github.com/lwrlock/ff-power-manager</pre>
+</div>
+<script>
+  const repo = "https://github.com/lwrlock/ff-power-manager";
+  const mailTo = "mpearson@lenovo.com,mpearson-lenovo@squebb.ca";
+  const mailSubj = "Open-Source Collaboration: FF Power Manager v2.0 (Lenovo IdeaPad Pro 5 / ST VL53L1 ToF + 120Hz ProMotion + s2idle)";
+  const mailBody = document.getElementById("lenovoBody").innerText;
+
+  document.getElementById("gmailLink").href =
+    `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(mailTo)}&su=${encodeURIComponent(mailSubj)}&body=${encodeURIComponent(mailBody)}`;
+
+  const hnTitle = "Show HN: FF Power Manager v2.0 – MacBook ProMotion (60<->120Hz), OLED Guard & ToF Radar for Linux";
+  document.getElementById("hnLink").href =
+    `https://news.ycombinator.com/submitlink?u=${encodeURIComponent(repo)}&t=${encodeURIComponent(hnTitle)}`;
+
+  const rTitle = "[Open Source] FF Power Manager v2.0 – Battery-Only ProMotion (60<->120Hz at 0ms), OLED Care, s2idle Sleep Guard & Telemetry (.deb + Source)";
+  document.getElementById("rLinuxLink").href = `https://www.reddit.com/r/linux/submit?url=${encodeURIComponent(repo)}&title=${encodeURIComponent(rTitle)}`;
+  document.getElementById("rLenovoLink").href = `https://www.reddit.com/r/Lenovo/submit?url=${encodeURIComponent(repo)}&title=${encodeURIComponent(rTitle)}`;
+  document.getElementById("rUbuntuLink").href = `https://www.reddit.com/r/Ubuntu/submit?url=${encodeURIComponent(repo)}&title=${encodeURIComponent(rTitle)}`;
+
+  const tweet = "I just open-sourced FF Power Manager v2.0 — MacBook-grade battery life, 0ms Battery-Only ProMotion (60<->120Hz), OLED burn-in care, ToF radar & s2idle sleep drain guard for Linux laptops (.deb + source): " + repo;
+  document.getElementById("xLink").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}`;
+</script>
+</body>
+</html>
