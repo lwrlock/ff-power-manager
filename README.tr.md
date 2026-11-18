@@ -7,7 +7,22 @@
 
 Linux dizüstü bilgisayarlar için güç profili yöneticisi, adaptif ekran yenileme (`60↔Max Hz`), süreç bazlı güç/uyanma analizi (`ffctl blame`), `s2idle` uyku tüketim raporu (`ffctl sleep-report`), isteğe bağlı ToF varlık sensörü desteği ve GTK4 arayüzü.
 
-![FF Power Manager Genel Bakış](docs/screenshots/overview.png)
+<p align="center">
+  <img src="docs/screenshots/showcase.gif" alt="FF Power Manager Arayüz Turu" width="880"/>
+</p>
+
+<details>
+<summary>Ekran görüntüleri (genel bakış, blame, profiller, ekran)</summary>
+
+| Genel Bakış | Süreç Tüketimi & Kısıtlama |
+| :---: | :---: |
+| ![Genel Bakış](docs/screenshots/overview.png) | ![Blame](docs/screenshots/blame.png) |
+
+| Pil & Priz Profilleri | Adaptif Yenileme & ToF |
+| :---: | :---: |
+| ![Profiller](docs/screenshots/profiles.png) | ![Ekran](docs/screenshots/display.png) |
+
+</details>
 
 ## v2.2.0 Özellikleri
 
@@ -30,6 +45,6 @@ cd ff-power-manager
 sudo ./install.sh
 ```
 
-## Lisans
+## Lisans ve Geliştirme
 
-MIT — ayrıntılar için [LICENSE](LICENSE).
+MIT — ayrıntılar için [LICENSE](LICENSE). Furkan (`@lwrlock`) tarafından yapay zeka kodlama desteği (Google DeepMind Antigravity) ile geliştirildi ve gerçek Linux donanımı üzerinde test edildi.

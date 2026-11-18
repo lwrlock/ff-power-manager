@@ -9,14 +9,20 @@ Linux laptop power profile manager with adaptive refresh rate switching (`60↔M
 
 Built with a C and x86_64 Assembly telemetry core (`ffctl`, `ff-tui`, `ff-presence-sensor`) paired with Python, GTK4, and Wayland/DBus integration for Intel and AMD laptops (Ubuntu, Debian, Fedora).
 
-![FF Power Manager Overview](docs/screenshots/overview.png)
+<p align="center">
+  <img src="docs/screenshots/showcase.gif" alt="FF Power Manager Showcase" width="880"/>
+</p>
 
 <details>
-<summary>Additional screenshots (blame, profiles, display)</summary>
+<summary>Screenshots (overview, blame, profiles, display)</summary>
 
-| Power Blame & Process Freeze | Battery & AC Profiles | Display & ToF Gestures |
-| :---: | :---: | :---: |
-| ![Blame](docs/screenshots/blame.png) | ![Profiles](docs/screenshots/profiles.png) | ![Display](docs/screenshots/display.png) |
+| Telemetry Overview | Power Blame & Process Freeze |
+| :---: | :---: |
+| ![Overview](docs/screenshots/overview.png) | ![Blame](docs/screenshots/blame.png) |
+
+| Battery & AC Profiles | Display & ToF Gestures |
+| :---: | :---: |
+| ![Profiles](docs/screenshots/profiles.png) | ![Display](docs/screenshots/display.png) |
 
 </details>
 
@@ -111,7 +117,7 @@ ffctl conservation on|off    # Toggle 80% battery conservation threshold
 ffctl benchmark              # Benchmark native C + x86_64 assembly sysfs read latency
 ```
 
-Launch interactive UIs anytime: `ff-power-manager` (Cosmic GTK4 App) or `ff-tui` (Terminal Dashboard).
+Launch interactive UIs anytime: `ff-power-manager` (GTK4 App) or `ff-tui` (Terminal Dashboard).
 
 ---
 
@@ -128,6 +134,6 @@ Found an issue or hardware quirk on a ThinkPad, IdeaPad, Framework, ASUS, or AMD
 - [netpulse-bpf](https://github.com/lwrlock/netpulse-bpf) — Interface rate, TCP BBR/`fq`, `/proc/net/snmp` retransmit & socket monitor + `sock_ops` eBPF hook
 - [nvme-sentinel](https://github.com/lwrlock/nvme-sentinel) — NVMe `hwmon` thermal, PCIe link, APST latency & `/sys/block/nvme*` IOPS monitor
 
-## License
+## License & Development
 
-MIT License. Copyright (c) 2026 Furkan (**lwrlock**). See [LICENSE](LICENSE).
+MIT License. Copyright (c) 2026 Furkan (**lwrlock**). See [LICENSE](LICENSE). Built with AI coding assistance (Google DeepMind Antigravity) and tested directly on bare-metal Linux hardware.
