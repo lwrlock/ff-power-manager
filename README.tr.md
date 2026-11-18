@@ -4,6 +4,7 @@
 [![Platform: Ubuntu | Debian | Fedora](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora-teal.svg)](https://ubuntu.com)
 [![Desktop: GNOME Wayland](https://img.shields.io/badge/Desktop-GNOME%20%2F%20Wayland-orange.svg)](https://www.gnome.org)
 [![Engine: C & x86_64 ASM](https://img.shields.io/badge/Engine-C%20%26%20x86__64%20ASM-success.svg)](#)
+[![AI-Assisted: Antigravity](https://img.shields.io/badge/AI--Destekli-Google%20DeepMind%20Antigravity-purple.svg)](#geliştirme-ve-yapay-zeka-desteği)
 [![Release: v2.1.0](https://img.shields.io/badge/Release-v2.1.0-blueviolet.svg)](https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0)
 
 [ [English](README.md) | Türkçe ]
@@ -36,6 +37,10 @@ git clone https://github.com/lwrlock/ff-power-manager.git
 cd ff-power-manager
 sudo ./install.sh
 ```
+
+## Geliştirme ve Yapay Zeka Desteği
+
+**FF Power Manager**, **Furkan (`@lwrlock`)** tarafından **Google DeepMind Antigravity** yapay zeka destekli mühendislik iş birliği ile geliştirilmektedir (HID Report 4 çözümleme, C/x86_64 Assembly optimizasyonu, birim testleri ve çoklu dağıtım sertleştirmesi süreçlerinde AI desteği alınmış; tüm canlı donanım ve çekirdek testleri doğrudan gerçek Linux sistemler üzerinde doğrulanmıştır).
 
 ## Lisans
 

@@ -4,6 +4,7 @@
 [![Platform: Ubuntu | Debian | Fedora](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora-teal.svg)](https://ubuntu.com)
 [![Desktop: GNOME Wayland](https://img.shields.io/badge/Desktop-GNOME%20%2F%20Wayland-orange.svg)](https://www.gnome.org)
 [![Engine: C & x86_64 ASM](https://img.shields.io/badge/Engine-C%20%26%20x86__64%20ASM-success.svg)](#architecture)
+[![AI-Assisted: Antigravity](https://img.shields.io/badge/AI--Assisted-Google%20DeepMind%20Antigravity-purple.svg)](#development--ai-collaboration)
 [![Release: v2.1.0](https://img.shields.io/badge/Release-v2.1.0-blueviolet.svg)](https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0)
 
 [ English | [Türkçe](README.tr.md) ]
@@ -94,6 +95,10 @@ bash build-deb.sh
 - **GNOME Top-Bar Popover:** Live package wattage, CPU/SSD/Wi-Fi thermals, Intel Xe / AMD GPU clocks, battery ETA & cycle count, active profile switcher, Adaptive Refresh, OLED Dimming, Focus Mode, One-Shot 100%, ToF Radar toggles, and MPRIS media controls.
 
 ---
+
+## Development & AI Collaboration
+
+FF Power Manager is built and maintained by **Furkan (`@lwrlock`)** with **AI-assisted engineering via Google DeepMind Antigravity** (used for HID Report 4 parsing optimization, C/x86_64 assembly boilerplate, automated test coverage, and multi-distro hardening, while all real-hardware validation and kernel telemetry profiling are verified directly on bare-metal Linux hardware).
 
 ## Contributing & Support
 
