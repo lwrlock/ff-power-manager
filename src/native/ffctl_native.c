@@ -12,11 +12,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "sensor_asm.h"
 
@@ -227,6 +229,122 @@ static void run_sensor_live(void) {
     }
 }
 
+static int exec_argv_sync(const char *const argv[], bool quiet) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        if (quiet) {
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                dup2(devnull, STDERR_FILENO);
+                close(devnull);
+            }
+        }
+        execv(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+static int run_helper_elevated(const char *const helper_args[]) {
+    const char *helper = "/usr/local/lib/ff-power-manager/ff-power-helper";
+    const char *argv[12];
+    size_t i = 0;
+
+    if (geteuid() == 0) {
+        argv[i++] = helper;
+        for (size_t j = 0; helper_args[j] && i < 11; j++) argv[i++] = helper_args[j];
+        argv[i] = NULL;
+        return exec_argv_sync(argv, false);
+    }
+
+    /* Try non-interactive sudo first (if user has sudoers rule), else Polkit pkexec */
+    i = 0;
+    argv[i++] = "/usr/bin/sudo";
+    argv[i++] = "-n";
+    argv[i++] = helper;
+    for (size_t j = 0; helper_args[j] && i < 11; j++) argv[i++] = helper_args[j];
+    argv[i] = NULL;
+    if (exec_argv_sync(argv, true) == 0) return 0;
+
+    i = 0;
+    argv[i++] = "/usr/bin/pkexec";
+    argv[i++] = helper;
+    for (size_t j = 0; helper_args[j] && i < 11; j++) argv[i++] = helper_args[j];
+    argv[i] = NULL;
+    return exec_argv_sync(argv, false);
+}
+
+static int get_cpu_package_temp_c(void) {
+    /* 1. Prefer hwmon coretemp (Intel) or k10temp/zenpower (AMD) */
+    DIR *hd = opendir("/sys/class/hwmon");
+    if (hd) {
+        struct dirent *de;
+        while ((de = readdir(hd)) != NULL) {
+            if (strncmp(de->d_name, "hwmon", 5) != 0) continue;
+            char name_path[512], hname[64] = "";
+            snprintf(name_path, sizeof(name_path), "/sys/class/hwmon/%s/name", de->d_name);
+            if (!read_sysfs_string(name_path, hname, sizeof(hname))) continue;
+            if (strcmp(hname, "coretemp") == 0 || strcmp(hname, "k10temp") == 0 || strcmp(hname, "zenpower") == 0) {
+                char temp_path[512];
+                snprintf(temp_path, sizeof(temp_path), "/sys/class/hwmon/%s/temp1_input", de->d_name);
+                int64_t mc = asm_fast_read_sysfs_int(temp_path);
+                if (mc > 10000 && mc < 120000) {
+                    closedir(hd);
+                    return (int)(mc / 1000);
+                }
+            }
+        }
+        closedir(hd);
+    }
+
+    /* 2. Fallback to thermal_zone matching CPU package types */
+    DIR *td = opendir("/sys/class/thermal");
+    if (td) {
+        struct dirent *de;
+        while ((de = readdir(td)) != NULL) {
+            if (strncmp(de->d_name, "thermal_zone", 12) != 0) continue;
+            char type_path[512], ztype[64] = "";
+            snprintf(type_path, sizeof(type_path), "/sys/class/thermal/%s/type", de->d_name);
+            if (!read_sysfs_string(type_path, ztype, sizeof(ztype))) continue;
+            if (strcmp(ztype, "x86_pkg_temp") == 0 || strcmp(ztype, "TCPU") == 0 || strcmp(ztype, "acpitz") == 0) {
+                char temp_path[512];
+                snprintf(temp_path, sizeof(temp_path), "/sys/class/thermal/%s/temp", de->d_name);
+                int64_t mc = asm_fast_read_sysfs_int(temp_path);
+                if (mc > 10000 && mc < 120000) {
+                    closedir(td);
+                    return (int)(mc / 1000);
+                }
+            }
+        }
+        closedir(td);
+    }
+    return -1;
+}
+
+static void format_refresh_rate(const char *raw, char *out, size_t out_size) {
+    if (!raw || !raw[0] || strcmp(raw, "—") == 0) {
+        snprintf(out, out_size, "Adaptive");
+        return;
+    }
+    const char *at = strchr(raw, '@');
+    if (at) {
+        double hz = atof(at + 1);
+        bool has_vrr = (strstr(raw, "+vrr") != NULL);
+        if (hz >= 58.0 && hz <= 62.0) {
+            snprintf(out, out_size, "60 Hz (Power Saver)");
+        } else if (hz > 0.0) {
+            snprintf(out, out_size, "%.0f Hz%s (Adaptive)", hz, has_vrr ? " + VRR" : "");
+        } else {
+            snprintf(out, out_size, "%s", raw);
+        }
+        return;
+    }
+    snprintf(out, out_size, "%s", raw);
+}
+
 static bool write_sysfs_string(const char *path, const char *val) {
     int fd = open(path, O_WRONLY);
     if (fd < 0) return false;
@@ -238,7 +356,16 @@ static bool write_sysfs_string(const char *path, const char *val) {
 #define LENOVO_VPC_DIR "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00"
 #define PLATFORM_PROFILE_NODE "/sys/firmware/acpi/platform_profile"
 
-static void print_battery_health(void) {
+static bool has_json_flag(int argc, char *argv[]) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0 || strcmp(argv[i], "-j") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void print_battery_health(bool as_json) {
     init_battery_path();
     char path[512];
     char mfg[64] = "—", model[64] = "—", tech[64] = "—", charge_types[128] = "—";
@@ -290,6 +417,25 @@ static void print_battery_health(void) {
     double now_wh = (now_uwh > 0) ? (now_uwh / 1e6) : 0.0;
     double health_pct = (design_wh > 0.0) ? (full_wh / design_wh * 100.0) : 100.0;
     double watts = get_battery_watts();
+
+    if (as_json) {
+        printf("{\n"
+               "  \"manufacturer\": \"%s\",\n"
+               "  \"model\": \"%s\",\n"
+               "  \"technology\": \"%s\",\n"
+               "  \"capacity_pct\": %ld,\n"
+               "  \"energy_now_wh\": %.2f,\n"
+               "  \"energy_full_wh\": %.2f,\n"
+               "  \"energy_design_wh\": %.2f,\n"
+               "  \"health_pct\": %.1f,\n"
+               "  \"cycle_count\": %ld,\n"
+               "  \"voltage_v\": %.2f,\n"
+               "  \"watts\": %.2f\n"
+               "}\n",
+               mfg, model, tech, (long)cap, now_wh, full_wh, design_wh,
+               health_pct, (long)cycles, vol_uv > 0 ? (vol_uv / 1e6) : 0.0, watts);
+        return;
+    }
 
     printf(COLOR_BOLD "=== Battery Health & Degradation Analytics ===\n" COLOR_RESET);
     printf("  Manufacturer        : %s\n", mfg);
@@ -343,35 +489,34 @@ static int set_lenovo_feature(const char *feature, const char *val) {
     char path[256];
     snprintf(path, sizeof(path), "%s/%s", LENOVO_VPC_DIR, feature);
 
-    if (access(path, F_OK) != 0) {
-        fprintf(stderr, COLOR_RED "Error: Lenovo node %s not found.\n" COLOR_RESET, path);
+    bool has_lenovo_node = (access(path, F_OK) == 0);
+    if (!has_lenovo_node && strcmp(feature, "conservation_mode") != 0) {
+        fprintf(stderr, COLOR_RED "Error: Hardware node %s not found.\n" COLOR_RESET, path);
         return 1;
     }
 
     char str_val[4];
     snprintf(str_val, sizeof(str_val), "%d", v);
 
-    if (geteuid() == 0) {
+    if (geteuid() == 0 && has_lenovo_node) {
         if (write_sysfs_string(path, str_val)) {
-            printf(COLOR_GREEN "✓ Lenovo %s set to %s successfully.\n" COLOR_RESET, feature, v ? "ON" : "OFF");
+            printf(COLOR_GREEN "✓ %s set to %s successfully.\n" COLOR_RESET, feature, v ? "ON" : "OFF");
             return 0;
         }
     }
 
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo %s %d 2>/dev/null || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo %s %d",
-             feature, v, feature, v);
-    int rc = system(cmd);
+    const char *helper_args[] = { "set-lenovo", feature, str_val, NULL };
+    int rc = run_helper_elevated(helper_args);
     if (rc == 0) {
-        printf(COLOR_GREEN "✓ Lenovo %s set to %s successfully.\n" COLOR_RESET, feature, v ? "ON" : "OFF");
+        printf(COLOR_GREEN "✓ Charge/hardware feature %s set to %s successfully.\n" COLOR_RESET, feature, v ? "ON" : "OFF");
         return 0;
     } else {
-        fprintf(stderr, COLOR_RED "Failed to set Lenovo %s.\n" COLOR_RESET, feature);
+        fprintf(stderr, COLOR_RED "Failed to set %s.\n" COLOR_RESET, feature);
         return 1;
     }
 }
 
-static void print_status(void) {
+static void print_status(bool as_json) {
     init_battery_path();
     bool bat = is_on_battery();
     char cap_path[512];
@@ -379,40 +524,37 @@ static void print_status(void) {
     int64_t cap = asm_fast_read_sysfs_int(cap_path);
     double watts = get_battery_watts();
 
-    char refresh[128] = "—";
-    read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
-    if (strcmp(refresh, "2880x1800@60.000") == 0) strcpy(refresh, "60 Hz (Power Saver)");
-    else if (strcmp(refresh, "2880x1800@120.000+vrr") == 0) strcpy(refresh, "120 Hz + VRR (Smooth)");
+    char raw_refresh[128] = "";
+    char refresh[128] = "Adaptive";
+    read_sysfs_string(REFRESH_FILE, raw_refresh, sizeof(raw_refresh));
+    format_refresh_rate(raw_refresh, refresh, sizeof(refresh));
 
     char presence[64] = "disabled";
     read_sysfs_string(STATE_FILE, presence, sizeof(presence));
 
-    /* Turbo status */
-    int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
-    const char *turbo_str = (no_turbo == 0) ? COLOR_GREEN "Enabled" COLOR_RESET : (no_turbo == 1 ? COLOR_YELLOW "Disabled" COLOR_RESET : "—");
+    char pstate_drv[64] = "—";
+    read_sysfs_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver", pstate_drv, sizeof(pstate_drv));
 
-    /* CPU EPP */
+    int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
+    const char *turbo_str = (no_turbo == 0) ? COLOR_GREEN "Enabled" COLOR_RESET : (no_turbo == 1 ? COLOR_YELLOW "Disabled" COLOR_RESET : "Auto");
+
     char epp[64] = "—";
     if (!read_sysfs_string("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", epp, sizeof(epp))) {
         read_sysfs_string("/sys/devices/system/cpu/cpu0/power/energy_perf_bias", epp, sizeof(epp));
     }
 
-    /* PCIe ASPM */
     char aspm[64] = "—";
     get_active_aspm_policy(aspm, sizeof(aspm));
 
-    /* CPU Online Topology & Max Freq */
-    char online_cores[64] = "0-15";
+    char online_cores[64] = "—";
     read_sysfs_string("/sys/devices/system/cpu/online", online_cores, sizeof(online_cores));
+    long onln = sysconf(_SC_NPROCESSORS_ONLN);
+    long conf = sysconf(_SC_NPROCESSORS_CONF);
     int64_t p_max_khz = asm_fast_read_sysfs_int("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
-    double p_max_ghz = p_max_khz > 0 ? (double)p_max_khz / 1e6 : 4.8;
+    double p_max_ghz = p_max_khz > 0 ? (double)p_max_khz / 1e6 : 0.0;
 
-    /* CPU Thermal Zone */
-    int64_t temp_mc = asm_fast_read_sysfs_int("/sys/class/thermal/thermal_zone2/temp");
-    if (temp_mc <= 10000) temp_mc = asm_fast_read_sysfs_int("/sys/class/thermal/thermal_zone1/temp");
-    int temp_c = (temp_mc > 10000 && temp_mc < 115000) ? (int)(temp_mc / 1000) : 38;
+    int temp_c = get_cpu_package_temp_c();
 
-    /* Translate presence for terminal */
     const char *pres_txt = "Disabled";
     if (strcmp(presence, "present") == 0) pres_txt = COLOR_GREEN "User Present (At Desk - Distance < 1.2m)" COLOR_RESET;
     else if (strcmp(presence, "absent") == 0) pres_txt = COLOR_YELLOW "User Away (Standby Mode)" COLOR_RESET;
@@ -421,6 +563,30 @@ static void print_status(void) {
 
     SensorTelemetry tel;
     bool has_tel = read_sensor_telemetry(&tel);
+
+    if (as_json) {
+        printf("{\n"
+               "  \"power_source\": \"%s\",\n"
+               "  \"battery_percent\": %ld,\n"
+               "  \"watts\": %.2f,\n"
+               "  \"package_temp_c\": %d,\n"
+               "  \"cpu_online\": %ld,\n"
+               "  \"cpu_total\": %ld,\n"
+               "  \"cpu_max_ghz\": %.2f,\n"
+               "  \"scaling_driver\": \"%s\",\n"
+               "  \"epp\": \"%s\",\n"
+               "  \"turbo_enabled\": %s,\n"
+               "  \"pcie_aspm\": \"%s\",\n"
+               "  \"refresh_rate\": \"%s\",\n"
+               "  \"presence_state\": \"%s\"\n"
+               "}\n",
+               bat ? "battery" : "ac",
+               (long)cap, watts, temp_c,
+               onln, conf, p_max_ghz, pstate_drv, epp,
+               (no_turbo == 0) ? "true" : (no_turbo == 1 ? "false" : "null"),
+               aspm, refresh, presence);
+        return;
+    }
 
     printf(COLOR_BOLD "=== FF Power Manager Status (Native Engine) ===\n" COLOR_RESET);
     printf("  Power Source          : %s%s%s\n",
@@ -431,19 +597,22 @@ static void print_status(void) {
     if (cap >= 0) {
         printf("  Battery Level         : %ld%%\n", (long)cap);
     }
-    if (watts > 0.0) {
-        printf("  Active Draw           : %.2f W (Package Temp: %d°C)\n", watts, temp_c);
+    if (watts > 0.0 || temp_c > 0) {
+        if (temp_c > 0) {
+            printf("  Active Draw / Temp    : %.2f W (Package Temp: %d°C)\n", watts, temp_c);
+        } else {
+            printf("  Active Draw           : %.2f W\n", watts);
+        }
     }
-    printf("  CPU Hybrid Topology   : %s (%s • %.1f GHz Burst)\n",
-           strcmp(online_cores, "0-15") == 0 ? "16/16 All-Core Active" : "MacBook Hybrid Active",
-           online_cores, p_max_ghz);
+    printf("  CPU Topology & Cap    : %ld/%ld Online (%s • %.1f GHz Burst)\n",
+           onln, conf, online_cores, p_max_ghz);
     printf("  Display Refresh Rate  : %s\n", refresh);
     if (access("/run/ff-power-manager/media.state", F_OK) == 0) {
         printf("  Smart Media Mode      : %s\n", COLOR_GREEN "Active (Low-Power Video Playback)" COLOR_RESET);
     }
-    printf("  Desktop QoS Engine    : %s\n", COLOR_GREEN "MacBook Pro Fluidity (Compositor/IDE Priority + Autogroup)" COLOR_RESET);
-    printf("  CPU EPP Policy        : %s\n", epp);
-    printf("  Intel Turbo Boost     : %s\n", turbo_str);
+    printf("  Scheduling QoS        : %s\n", COLOR_GREEN "Interactive Compositor/Audio Affinity + Autogroup" COLOR_RESET);
+    printf("  CPU Driver / EPP      : %s / %s\n", pstate_drv, epp);
+    printf("  Turbo Boost           : %s\n", turbo_str);
     printf("  PCIe ASPM Policy      : %s\n", aspm);
     printf("  Presence Sensor (ToF) : %s\n", pres_txt);
     if (has_tel) {
@@ -453,30 +622,131 @@ static void print_status(void) {
     printf("--------------------------------------------------\n");
 }
 
+static bool symlink_or_file_exists(const char *path) {
+    struct stat st;
+    return lstat(path, &st) == 0;
+}
+
+static void print_doctor(bool as_json) {
+    char mem_sleep[128] = "unknown";
+    read_sysfs_string("/sys/power/mem_sleep", mem_sleep, sizeof(mem_sleep));
+    bool has_s2idle = (strstr(mem_sleep, "[s2idle]") != NULL);
+    bool has_deep = (strstr(mem_sleep, "[deep]") != NULL);
+    bool sleep_hook_ok = (access("/lib/systemd/system-sleep/ff-sleep-guard", X_OK) == 0);
+
+    char pstate_drv[64] = "unknown";
+    read_sysfs_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver", pstate_drv, sizeof(pstate_drv));
+    char epp[64] = "unknown";
+    read_sysfs_string("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", epp, sizeof(epp));
+    char aspm[64] = "unknown";
+    get_active_aspm_policy(aspm, sizeof(aspm));
+
+    int wakeup_enabled = 0;
+    FILE *wf = fopen("/proc/acpi/wakeup", "r");
+    if (wf) {
+        char line[256];
+        while (fgets(line, sizeof(line), wf)) {
+            if (strstr(line, "*enabled") != NULL &&
+                strncmp(line, "PWRB", 4) != 0 &&
+                strncmp(line, "SLPB", 4) != 0 &&
+                strncmp(line, "LID", 3) != 0) {
+                wakeup_enabled++;
+            }
+        }
+        fclose(wf);
+    }
+
+    int pci_total = 0, pci_suspended = 0, pci_active = 0;
+    DIR *pd = opendir("/sys/bus/pci/devices");
+    if (pd) {
+        struct dirent *de;
+        while ((de = readdir(pd)) != NULL) {
+            if (de->d_name[0] == '.') continue;
+            char st_path[320], st[32] = "";
+            snprintf(st_path, sizeof(st_path), "/sys/bus/pci/devices/%s/power/runtime_status", de->d_name);
+            if (!read_sysfs_string(st_path, st, sizeof(st))) continue;
+            pci_total++;
+            if (strcmp(st, "suspended") == 0) pci_suspended++;
+            else if (strcmp(st, "active") == 0) pci_active++;
+        }
+        closedir(pd);
+    }
+
+    bool svc_apply = symlink_or_file_exists("/run/systemd/units/invocation:ff-power-apply.service") ||
+                     symlink_or_file_exists("/etc/systemd/system/graphical.target.wants/ff-power-apply.service") ||
+                     symlink_or_file_exists("/etc/systemd/system/multi-user.target.wants/ff-power-apply.service");
+    bool svc_boost = symlink_or_file_exists("/run/systemd/units/invocation:ff-power-autoboost.service");
+    bool conflict_tlp = symlink_or_file_exists("/run/systemd/units/invocation:tlp.service");
+    bool conflict_autocpu = symlink_or_file_exists("/run/systemd/units/invocation:auto-cpufreq.service");
+
+    if (as_json) {
+        printf("{\n"
+               "  \"mem_sleep\": \"%s\",\n"
+               "  \"sleep_guard_hook\": %s,\n"
+               "  \"acpi_non_lid_wakeups_enabled\": %d,\n"
+               "  \"scaling_driver\": \"%s\",\n"
+               "  \"epp\": \"%s\",\n"
+               "  \"pcie_aspm\": \"%s\",\n"
+               "  \"pci_devices_total\": %d,\n"
+               "  \"pci_devices_suspended\": %d,\n"
+               "  \"pci_devices_active\": %d,\n"
+               "  \"service_autoboost_active\": %s,\n"
+               "  \"conflict_tlp\": %s,\n"
+               "  \"conflict_auto_cpufreq\": %s\n"
+               "}\n",
+               has_s2idle ? "s2idle" : (has_deep ? "deep" : mem_sleep),
+               sleep_hook_ok ? "true" : "false",
+               wakeup_enabled,
+               pstate_drv, epp, aspm,
+               pci_total, pci_suspended, pci_active,
+               svc_boost ? "true" : "false",
+               conflict_tlp ? "true" : "false",
+               conflict_autocpu ? "true" : "false");
+        return;
+    }
+
+    printf(COLOR_BOLD "=== FF Power Manager Hardware & Residency Audit (ffctl doctor) ===\n" COLOR_RESET);
+    printf("  [%s] Sleep Mode        : %s (s2idle sleep guard: %s)\n",
+           sleep_hook_ok ? COLOR_GREEN "OK" COLOR_RESET : COLOR_YELLOW "WARN" COLOR_RESET,
+           mem_sleep,
+           sleep_hook_ok ? "installed" : "missing");
+    printf("  [%s] ACPI Wake Sources : %d non-lid/power wakeup triggers armed\n",
+           wakeup_enabled <= 2 ? COLOR_GREEN "OK" COLOR_RESET : COLOR_YELLOW "WARN" COLOR_RESET,
+           wakeup_enabled);
+    printf("  [%s] CPU P-State / EPP : driver=%s | epp=%s\n",
+           (strstr(pstate_drv, "pstate") != NULL) ? COLOR_GREEN "OK" COLOR_RESET : COLOR_YELLOW "WARN" COLOR_RESET,
+           pstate_drv, epp);
+    printf("  [%s] PCIe ASPM Policy  : %s\n",
+           (strcmp(aspm, "powersave") == 0 || strcmp(aspm, "powersupersave") == 0) ? COLOR_GREEN "OK" COLOR_RESET : COLOR_CYAN "INFO" COLOR_RESET,
+           aspm);
+    printf("  [%s] PCI Runtime PM    : %d/%d devices suspended (%d active)\n",
+           pci_suspended > 0 ? COLOR_GREEN "OK" COLOR_RESET : COLOR_YELLOW "WARN" COLOR_RESET,
+           pci_suspended, pci_total, pci_active);
+    printf("  [%s] Daemon Stack      : apply=%s | autoboost=%s\n",
+           (svc_apply && svc_boost) ? COLOR_GREEN "OK" COLOR_RESET : COLOR_YELLOW "WARN" COLOR_RESET,
+           svc_apply ? "enabled" : "inactive",
+           svc_boost ? "running" : "inactive");
+    if (conflict_tlp || conflict_autocpu) {
+        printf("  [" COLOR_RED "WARN" COLOR_RESET "] Conflicting Daemon: %s detected! Run only one power daemon.\n",
+               conflict_tlp ? "tlp.service" : "auto-cpufreq.service");
+    } else {
+        printf("  [" COLOR_GREEN "OK" COLOR_RESET "] Daemon Conflicts  : None (tlp / auto-cpufreq not running)\n");
+    }
+    printf("--------------------------------------------------\n");
+}
+
 static int run_apply(const char *profile) {
     printf(COLOR_BOLD "Applying power profile '%s'...\n" COLOR_RESET, (profile && profile[0]) ? profile : "auto");
-    char cmd[512];
-    const char *parg = (profile && strlen(profile) > 0) ? profile : "";
-    if (geteuid() == 0) {
-        if (parg[0]) {
-            snprintf(cmd, sizeof(cmd), "/usr/local/lib/ff-power-manager/ff-power-helper apply %s", parg);
-        } else {
-            snprintf(cmd, sizeof(cmd), "/usr/local/lib/ff-power-manager/ff-power-helper apply");
-        }
-    } else {
-        if (parg[0]) {
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply %s 2>/dev/null || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper apply %s", parg, parg);
-        } else {
-            snprintf(cmd, sizeof(cmd), "pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply 2>/dev/null || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper apply");
-        }
-    }
-    int ret = system(cmd);
+    const char *parg = (profile && strlen(profile) > 0) ? profile : NULL;
+    const char *helper_args[4];
+    helper_args[0] = "apply";
+    helper_args[1] = parg;
+    helper_args[2] = NULL;
+    int ret = run_helper_elevated(helper_args);
     if (ret != 0) {
         fprintf(stderr, COLOR_RED "Notice: Helper invocation returned %d. Verifying hardware sysfs state...\n" COLOR_RESET, ret);
     }
 
-
-    /* Verification step: read back from actual hardware */
     int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
     char epp[64] = "unknown";
     if (!read_sysfs_string("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", epp, sizeof(epp))) {
@@ -484,26 +754,30 @@ static int run_apply(const char *profile) {
     }
     char aspm[64] = "unknown";
     get_active_aspm_policy(aspm, sizeof(aspm));
-    char refresh[128] = "unknown";
-    read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
+    char raw_refresh[128] = "", refresh[128] = "Adaptive";
+    read_sysfs_string(REFRESH_FILE, raw_refresh, sizeof(raw_refresh));
+    format_refresh_rate(raw_refresh, refresh, sizeof(refresh));
 
     printf("\n" COLOR_GREEN COLOR_BOLD "✓ Profile Applied & Verified in Hardware:" COLOR_RESET "\n");
     printf("  CPU Energy Perf (EPP) : %s\n", epp);
-    printf("  Intel Turbo Boost     : %s\n", no_turbo == 0 ? "ENABLED" : (no_turbo == 1 ? "DISABLED" : "unknown"));
+    printf("  Turbo Boost           : %s\n", no_turbo == 0 ? "ENABLED" : (no_turbo == 1 ? "DISABLED" : "auto"));
     printf("  PCIe ASPM Policy      : %s\n", aspm);
-    printf("  OLED Refresh Mode     : %s\n", refresh);
+    printf("  Display Refresh Mode  : %s\n", refresh);
     printf("--------------------------------------------------\n");
     return 0;
 }
 
 static void run_benchmark(void) {
+    init_battery_path();
+    char cap_path[512];
+    snprintf(cap_path, sizeof(cap_path), "%s/capacity", g_bat_path[0] ? g_bat_path : "/sys/class/power_supply/BAT0");
     printf(COLOR_BOLD "Running 1,000 native status reads benchmark...\n" COLOR_RESET);
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < 1000; i++) {
         is_on_battery();
-        asm_fast_read_sysfs_int("/sys/class/power_supply/BAT1/capacity");
+        asm_fast_read_sysfs_int(cap_path);
         get_battery_watts();
     }
 
@@ -517,17 +791,20 @@ static void run_benchmark(void) {
 }
 
 int main(int argc, char *argv[]) {
-    if (geteuid() == 0) {
-        setuid(0);
-        setgid(0);
-    }
+    bool as_json = has_json_flag(argc, argv);
+
     if (argc < 2 || strcmp(argv[1], "status") == 0) {
-        print_status();
+        print_status(as_json);
+        return 0;
+    }
+
+    if (strcmp(argv[1], "doctor") == 0 || strcmp(argv[1], "audit") == 0) {
+        print_doctor(as_json);
         return 0;
     }
 
     if (strcmp(argv[1], "health") == 0 || strcmp(argv[1], "--health") == 0) {
-        print_battery_health();
+        print_battery_health(as_json);
         return 0;
     }
 
@@ -585,8 +862,7 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "tui") == 0) {
         execl("/usr/local/bin/ff-tui", "ff-tui", NULL);
-        execl("./ff-tui-native", "ff-tui-native", NULL);
-        perror("Failed to start TUI");
+        perror("Failed to start TUI (/usr/local/bin/ff-tui)");
         return 1;
     }
 
@@ -596,30 +872,30 @@ int main(int argc, char *argv[]) {
     }
 
     if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
-        printf("Usage: ffctl [COMMAND]\n\n"
+        printf("Usage: ffctl [COMMAND] [--json]\n\n"
                "Commands:\n"
-               "  status             Display live hardware power and ToF presence status\n"
-               "  apply [profile]    Apply power profile (battery|ac|extreme_performance|cool_quiet|max_battery)\n"
-               "  health             Display battery health, degradation, capacity and cycle analytics\n"
-               "  lenovo             Display Lenovo IdeaPad hardware integration status\n"
-               "  conservation <on|off> Toggle 80%% battery conservation mode\n"
-               "  fnlock <on|off>    Toggle Fn-lock primary keyboard function\n"
-               "  usbcharge <on|off> Toggle Always-On USB charging\n"
-               "  sensor status      Display ToF sensor telemetry, distance and packets\n"
-               "  sensor live        Continuous real-time ToF distance and packet stream\n"
-               "  tui                Launch interactive btop-style dashboard\n"
-               "  benchmark          Benchmark native sysfs & assembly execution speed\n"
-               "  help               Show this help message\n");
+               "  status [--json]       Display live hardware power, clocks and ToF presence telemetry\n"
+               "  doctor [--json]       Run hardware residency, PCI PM, wakeup & conflict audit\n"
+               "  apply [profile]       Apply profile (battery|ac|extreme_performance|cool_quiet|max_battery)\n"
+               "  health [--json]       Display battery health, degradation, capacity and cycle analytics\n"
+               "  lenovo                Display Lenovo ACPI hardware integration status\n"
+               "  conservation <on|off> Toggle 80%% charge conservation mode (Lenovo & threshold sysfs)\n"
+               "  fnlock <on|off>       Toggle Fn-lock primary keyboard function\n"
+               "  usbcharge <on|off>    Toggle Always-On USB charging\n"
+               "  sensor status         Display ToF sensor telemetry, distance and packets\n"
+               "  sensor live           Continuous real-time ToF distance and packet stream\n"
+               "  tui                   Launch interactive terminal dashboard\n"
+               "  benchmark             Benchmark native sysfs & assembly read latency\n"
+               "  help                  Show this help message\n");
         return 0;
     }
 
-    /* Fallback to apply if command matches a profile */
     if (strcmp(argv[1], "battery") == 0 || strcmp(argv[1], "ac") == 0 ||
         strcmp(argv[1], "extreme_performance") == 0 || strcmp(argv[1], "cool_quiet") == 0 ||
         strcmp(argv[1], "max_battery") == 0 || strcmp(argv[1], "responsive_battery") == 0) {
         return run_apply(argv[1]);
     }
 
-    print_status();
+    print_status(as_json);
     return 0;
 }

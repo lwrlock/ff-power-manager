@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-VER="2.0.0"
+VER="2.1.0"
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 PKG="ff-power-manager_${VER}_${ARCH}"
 STAGE="$ROOT/.stage/$PKG"
@@ -25,7 +25,7 @@ mkdir -p "$STAGE/etc/polkit-1/rules.d"
 mkdir -p "$STAGE/usr/local/share/applications"
 mkdir -p "$STAGE/usr/share/ff-power-manager/gnome-extension"
 
-install -m4755 "$ROOT/ffctl" "$STAGE/usr/local/bin/ffctl"
+install -m755 "$ROOT/ffctl" "$STAGE/usr/local/bin/ffctl"
 install -m755 "$ROOT/ff-tui" "$STAGE/usr/local/bin/ff-tui"
 install -m755 "$ROOT/ff-presence-sensor" "$STAGE/usr/local/bin/ff-presence-sensor"
 install -m644 "$ROOT"/src/fpm/*.py "$STAGE/usr/local/lib/ff-power-manager/fpm/"
@@ -62,20 +62,28 @@ Version: $VER
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3, python3-gi, gir1.2-glib-2.0, power-profiles-daemon, iw
+Depends: python3, python3-gi, gir1.2-glib-2.0, power-profiles-daemon, iw, polkitd | policykit-1
+Recommends: gir1.2-gtk-4.0, gir1.2-adw-1, libva-utils
 Maintainer: Furkan <lwrlock@users.noreply.github.com>
 Homepage: https://github.com/lwrlock/ff-power-manager
-Description: MacBook ProMotion, OLED Guard & Intelligent Laptop Power for Linux
+Description: Universal Linux Power, Adaptive Refresh & Telemetry Suite
  Hybrid C/x86_64 Assembly + Python/GTK4 laptop power optimizer featuring
- universal CPU/GPU/battery auto-discovery, battery-only Mutter ProMotion
- (60<->120Hz at 0ms wake), ToF human presence radar, Cinema/Focus context
- automation, One-Shot 100% charge watchdog, Thermal Guardrail, and s2idle
- backpack drain protection.
+ universal CPU/GPU/battery auto-discovery, battery-only Adaptive Refresh Rate
+ (60<->Max Hz via Mutter IdleMonitor), ST VL53L1 ToF human presence radar,
+ Cinema/Focus context automation, One-Shot 100% charge watchdog, Thermal
+ Guardrail, hardware residency diagnostics (ffctl doctor), and s2idle guard.
 EOF
 
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+ADMIN_GROUP="root"
+if getent group sudo >/dev/null 2>&1; then
+    ADMIN_GROUP="sudo"
+elif getent group wheel >/dev/null 2>&1; then
+    ADMIN_GROUP="wheel"
+fi
+install -d -m2775 -g "$ADMIN_GROUP" /etc/ff-power-manager || true
 systemctl daemon-reload || true
 udevadm control --reload-rules 2>/dev/null || true
 systemctl enable --now ff-power-apply.service ff-power-autoboost.service 2>/dev/null || true
@@ -89,6 +97,16 @@ fi
 exit 0
 EOF
 chmod 755 "$STAGE/DEBIAN/postinst"
+
+cat > "$STAGE/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    systemctl disable --now ff-power-apply.service ff-power-autoboost.service ff-presence-sensor.service 2>/dev/null || true
+fi
+exit 0
+EOF
+chmod 755 "$STAGE/DEBIAN/prerm"
 
 dpkg-deb --build --root-owner-group "$STAGE" "$ROOT/dist/${PKG}.deb"
 rm -rf "$ROOT/.stage"

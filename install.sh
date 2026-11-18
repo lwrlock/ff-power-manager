@@ -16,6 +16,13 @@ step '2/10' 'Cleaning Legacy Components'
 ./scripts/cleanup-legacy.sh --apply
 
 step '3/10' 'Directories & System Permissions'
+ADMIN_GROUP="root"
+if getent group sudo >/dev/null 2>&1; then
+  ADMIN_GROUP="sudo"
+elif getent group wheel >/dev/null 2>&1; then
+  ADMIN_GROUP="wheel"
+fi
+
 sudo install -d -m755 \
   /usr/local/lib/ff-power-manager/fpm \
   /usr/local/bin /usr/local/sbin \
@@ -24,15 +31,15 @@ sudo install -d -m755 \
   /usr/share/polkit-1/actions /etc/polkit-1/rules.d \
   /usr/share/gnome-shell/extensions
 
-# Secure wheel group access to /etc/ff-power-manager
-sudo install -d -m2775 -g wheel /etc/ff-power-manager
+# Secure admin group access to /etc/ff-power-manager
+sudo install -d -m2775 -g "$ADMIN_GROUP" /etc/ff-power-manager
 
 step '4/10' 'Building & Installing C & x86_64 Assembly Engine'
 make build
 
-# High performance native binaries (ffctl with setuid root for zero-latency sysfs writes)
+# High performance native binaries (unprivileged; PolicyKit / sudoers handles privileged helper)
 sudo install -m755 ff-presence-sensor /usr/local/bin/ff-presence-sensor
-sudo install -m4755 ffctl /usr/local/bin/ffctl
+sudo install -m755 ffctl /usr/local/bin/ffctl
 sudo install -m755 ff-tui /usr/local/bin/ff-tui
 sudo ln -sf /usr/local/bin/ffctl /usr/local/sbin/fpmctl
 
@@ -59,9 +66,9 @@ step '5/10' 'Privilege Policies (Polkit & Sudoers)'
 sudo install -m644 polkit/com.ff.powermanager.policy /usr/share/polkit-1/actions/
 sudo install -m644 polkit/50-ff-power-manager.rules /etc/polkit-1/rules.d/
 
-# Wheel group passwordless execution rule for hardware managers
-cat <<'SUDOERS' | sudo tee /etc/sudoers.d/50-ff-power-manager >/dev/null
-%wheel ALL=(ALL) NOPASSWD: /usr/local/lib/ff-power-manager/ff-power-helper, /usr/local/bin/ffctl, /usr/local/bin/ff-presence-sensor
+# Admin group passwordless execution rule for hardware helpers
+cat <<SUDOERS | sudo tee /etc/sudoers.d/50-ff-power-manager >/dev/null
+%${ADMIN_GROUP} ALL=(ALL) NOPASSWD: /usr/local/lib/ff-power-manager/ff-power-helper, /usr/local/bin/ffctl, /usr/local/bin/ff-presence-sensor
 SUDOERS
 sudo chmod 440 /etc/sudoers.d/50-ff-power-manager
 
@@ -70,15 +77,15 @@ cat <<'JSON' | sudo tee /etc/ff-power-manager/config.json >/dev/null
 {
   "battery": {
     "gnome_profile": "balanced",
-    "epp": "balance_performance",
+    "epp": "balance_power",
     "turbo": true,
-    "wifi_power_save": true,
+    "wifi_power_save": false,
     "nvme_runtime_pm": "auto",
-    "gpu_runtime_pm": "auto",
+    "gpu_runtime_pm": "on",
     "pcie_aspm": "powersupersave",
     "usb_autosuspend": "auto",
     "audio_powersave": "on",
-    "hwp_dynamic_boost": "off"
+    "hwp_dynamic_boost": "on"
   },
   "ac": {
     "gnome_profile": "balanced",
@@ -86,26 +93,26 @@ cat <<'JSON' | sudo tee /etc/ff-power-manager/config.json >/dev/null
     "turbo": true,
     "wifi_power_save": false,
     "nvme_runtime_pm": "auto",
-    "gpu_runtime_pm": "system",
-    "pcie_aspm": "system",
-    "usb_autosuspend": "system",
+    "gpu_runtime_pm": "on",
+    "pcie_aspm": "powersave",
+    "usb_autosuspend": "auto",
     "audio_powersave": "on",
-    "hwp_dynamic_boost": "system"
+    "hwp_dynamic_boost": "on"
   }
 }
 JSON
 
-# Sensor default thresholds (1.2m desk distance, 30s silence window)
+# Sensor default thresholds (1.2m desk distance, 15s silence floor)
 cat <<'JSON' | sudo tee /etc/ff-power-manager/sensor.json >/dev/null
 {
-  "silence_timeout": 30.0,
+  "silence_timeout": 15.0,
   "present_confirm_reports": 1,
   "present_confirm_window": 6.0,
   "distance_threshold": 12
 }
 JSON
 
-sudo chown -R root:wheel /etc/ff-power-manager
+sudo chown -R "root:${ADMIN_GROUP}" /etc/ff-power-manager
 sudo chmod 664 /etc/ff-power-manager/*.json 2>/dev/null || true
 
 step '7/10' 'System Services, Udev Rules, Kernel Tuning & GNOME Extension'
@@ -170,7 +177,7 @@ EOF
 
 # 5. Kernel TCP BBR, Scheduler Autogroup & Low-Latency VM Cache Tuning
 cat <<'EOF' | sudo tee /etc/sysctl.d/99-ff-system-tuning.conf >/dev/null
-# High performance networking and MacBook Pro-grade low-latency desktop caching
+# Low-latency interactive desktop scheduling, networking (BBR), and VM tuning
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 kernel.sched_autogroup_enabled = 1
@@ -192,14 +199,22 @@ cat <<'EOF' | sudo tee /etc/udev/rules.d/99-nvme-io.rules >/dev/null
 ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none", ATTR{queue/rq_affinity}="2", ATTR{queue/read_ahead_kb}="256", ATTR{queue/iostats}="0"
 EOF
 
-# 6. Hardware Video Acceleration (VA-API Intel iHD Driver)
-if ! grep -q "LIBVA_DRIVER_NAME=iHD" /etc/environment 2>/dev/null; then
-    echo "LIBVA_DRIVER_NAME=iHD" | sudo tee -a /etc/environment >/dev/null
+# 6. Hardware Video Acceleration (only configure Intel iHD if an Intel display controller exists)
+HAS_INTEL_GPU=false
+for vfile in /sys/bus/pci/devices/*/vendor; do
+  cfile="$(dirname "$vfile")/class"
+  if [[ -r "$vfile" && -r "$cfile" ]] && [[ "$(cat "$vfile")" == "0x8086" ]] && [[ "$(cat "$cfile")" == 0x03* ]]; then
+    HAS_INTEL_GPU=true
+    break
+  fi
+done
+if $HAS_INTEL_GPU && ! grep -q "LIBVA_DRIVER_NAME=iHD" /etc/environment 2>/dev/null; then
+  echo "LIBVA_DRIVER_NAME=iHD" | sudo tee -a /etc/environment >/dev/null
 fi
 
 step '8/10' 'Running Automated Native and Python Test Suite'
 ./test_native
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -v
 echo 'All native C, assembly, and Python unit tests: PASSED'
 
 step '9/10' 'Enabling and Starting Background Services'
@@ -226,11 +241,12 @@ fi
 
 step '10/10' 'Complete'
 echo '==================================================================='
-echo '  FF Power Manager (v2.0.0 - Universal Linux & C/ASM Engine) Ready!'
+echo '  FF Power Manager (v2.1.0 - Universal Linux & C/ASM Engine) Ready!'
 echo '==================================================================='
 echo '  ✓ Terminal Dashboard      : ff-tui  (or ffctl tui)'
-echo '  ✓ Hardware Power Status   : ffctl status'
-echo '  ✓ Battery Health Report   : ffctl health'
+echo '  ✓ Hardware Power Status   : ffctl status [--json]'
+echo '  ✓ Hardware Residency Audit: ffctl doctor [--json]'
+echo '  ✓ Battery Health Report   : ffctl health [--json]'
 echo '  ✓ Lenovo IdeaPad Control  : ffctl lenovo'
 echo '  ✓ Live ToF Radar Stream   : ffctl sensor live'
 echo '  ✓ GTK4 / Libadwaita GUI   : ff-power-manager'

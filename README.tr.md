@@ -1,28 +1,27 @@
-# FF Power Manager v2.0
+# FF Power Manager v2.1
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/lwrlock/ff-power-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/lwrlock/ff-power-manager/actions/workflows/ci.yml)
-[![Platform: Ubuntu & Fedora](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Fedora-teal.svg)](https://ubuntu.com)
+[![Platform: Ubuntu | Debian | Fedora](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian%20%7C%20Fedora-teal.svg)](https://ubuntu.com)
 [![Desktop: GNOME Wayland](https://img.shields.io/badge/Desktop-GNOME%20%2F%20Wayland-orange.svg)](https://www.gnome.org)
-[![Release: v2.0.0](https://img.shields.io/badge/Release-v2.0.0-blueviolet.svg)](https://github.com/lwrlock/ff-power-manager/releases/tag/v2.0.0)
+[![Engine: C & x86_64 ASM](https://img.shields.io/badge/Engine-C%20%26%20x86__64%20ASM-success.svg)](#)
+[![Release: v2.1.0](https://img.shields.io/badge/Release-v2.1.0-blueviolet.svg)](https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0)
 
 [ [English](README.md) | Türkçe ]
 
-**Linux dizüstü bilgisayarlara MacBook Pro pil ömrü, pilde 0 ms ProMotion (`60↔120 Hz`), OLED Yanık Koruması, ToF İnsan Varlığı Radarı ve `s2idle` Çanta Pil Koruması kazandıran akıllı güç yönetim paketi.**
+**Linux dizüstü bilgisayarlar için düşük yük bindirmeyen güç yönetimi, adaptif ekran tazeleme (`60↔Max Hz`), OLED yanık koruması, ToF varlık radarı, `ffctl doctor` donanım denetimi ve `s2idle` çanta koruması.**
 
-**C & x86_64 Assembly** çekirdek motoru + **Python / GTK4 / GNOME Shell Wayland** entegrasyonuyla artık tüm Intel ve AMD dizüstü bilgisayarlarda (`Ubuntu`, `Debian`, `Fedora`) **otomatik donanım keşfi** ile çalışır.
+**C & x86_64 Assembly** çekirdek motoru (`ffctl`, `ff-tui`, `ff-presence-sensor`) ve **Python / GTK4 / GNOME Shell Wayland** entegrasyonuyla Intel ve AMD dizüstü bilgisayarlarda (`Ubuntu`, `Debian`, `Fedora`) **evrensel donanım keşfi** ile çalışır.
 
 ---
 
-## v2.0.0 Yenilikleri
+## v2.1.0 Yenilikleri
 
-- **Pilde Gerçek ProMotion (`60 ↔ 120/144/165 Hz`):** Yalnızca pildeyken (prizde veya sinema oynatımı sırasında değil) `8` saniye hareketsizlikte ekranı `60 Hz`'e alır; touchpad veya tuşa dokunduğun milisaniyede `Mutter.IdleMonitor` ile **0 ms'de** tekrar en yüksek tazeleme hızına çıkar.
-- **Evrensel Donanım Keşfi:** CPU P/E/LP-E çekirdek topolojisi (`detect_cpu_topology()`), aktif ekran çözünürlüğü/Hz, `BAT0/BAT1` pil düğümü, Lenovo `conservation_mode` veya `charge_control_end_threshold`, Intel Xe / i915 / AMD Radeon GPU saat hızları ve SSD/Wi-Fi sıcaklıkları otomatik keşfedilir.
-- **Sinema & Ders/Odak Bağlam Motoru:** `stremio`, `mpv`, `vlc` algılandığında otomatik `120 Hz` + gerçek renk (Gece Işığı geçici kapalı) devreye girer. Menüdeki **Ders / Odak Modu** tek tıkla Rahatsız Etme + Gece Işığı + sessiz profili açar.
-- **1 Kerelik `%100` Şarj Bekçisi:** Günlük `%80` pil korumasını bozmadan yola çıkmadan önce tek tıkla `%100`'e şarj eder, `%99` olunca otomatik `%80` korumayı geri açıp bildirim gönderir.
-- **Termal Güvenlik Kalkanı (`>=90°C`):** `auto_boost.py` ağır yüklerde paket sıcaklığını izler, `90°C` üstünde PL1 limitini yumuşatarak throttling'i ve aşırı fan sesini önler.
-- **`s2idle` Çanta Koruması (`/lib/systemd/system-sleep/ff-sleep-guard`):** Uykuya geçerken USB/Thunderbolt wake sinyallerini kapatıp çantada ısınma ve şarj erimesini engeller.
-- **Günlük OLED & Enerji Tasarruf Karnesi:** Üst menüde ToF radar ve ProMotion ile kazanılan ekran koruma dakikasını ve tahmini `Wh` tasarrufunu gösterir.
+- **`ffctl doctor` Donanım Denetimi ve `--json` Çıktısı:** `s2idle`/`deep` uyku korumasını, `/proc/acpi/wakeup` uyandırma kaynaklarını, PCI Runtime PM (`suspended`/`active`) oranını ve çakışan servisleri (`tlp`, `auto-cpufreq`) milisaniyenin altında denetler; `ffctl status/health/doctor --json` çıktılarını scriptler ve Waybar için üretir.
+- **Güvenli Yetkilendirme (Zero Setuid Root):** `ffctl` ve `ff-tui` artık `0755` unprivileged çalışır; donanım yazma işlemleri `fork()` + `execv()` üzerinden scoped PolicyKit (`ff-power-helper`) ile yapılır (`sudo` ve `wheel` gruplarının ikisini de destekler).
+- **Evrensel CPU/GPU/RAPL Kalibrasyonu:** `set_hybrid_topology()`, `pin_interactive_irqs()` ve `optimize_desktop_responsiveness()` gerçek `detect_cpu_topology()` çekirdeklerini, `cpuinfo_max_freq` tavanını ve RAPL `constraint_0_max_power_uw` limitini dinamik keşfeder; AMD Ryzen ve `amd-pstate-epp` sistemlerde de sorunsuz çalışır.
+- **Gerçek Sıcaklık & Termal Güvenlik:** `hwmon` (`coretemp`/`k10temp`/`zenpower`) ve `thermal_zone` (`x86_pkg_temp`/`TCPU`) üzerinden gerçek CPU paket sıcaklığını okur; ağır yük `>=90°C` olduğunda PL1 limitini yumuşatır.
+- **Pilde Adaptif Yenileme (`60 ↔ 120/144/165 Hz`):** Yalnızca pildeyken `8` saniye hareketsizlikte ekranı `60 Hz`'e alır; dokunduğun anda `Mutter.IdleMonitor.AddUserActiveWatch` ile gecikmesiz maksimum tazeleme hızına çıkar.
+- **`s2idle` Çanta Koruması & 1 Kerelik `%100` Şarj Bekçisi:** Uykuya geçerken USB/Thunderbolt wake sinyallerini kapatır; yolculuk öncesi açılan `%100` şarj dolunca otomatik `%80` pil korumasını geri açar.
 
 ---
 
@@ -30,9 +29,9 @@
 
 ```bash
 # 1. Ubuntu / Debian .deb paketi ile:
-sudo apt install ./ff-power-manager_2.0.0_amd64.deb
+sudo apt install ./ff-power-manager_2.1.0_amd64.deb
 
-# 2. Veya kaynaktan kurulum (Ubuntu / Fedora):
+# 2. Veya kaynaktan kurulum (Ubuntu / Debian / Fedora):
 git clone https://github.com/lwrlock/ff-power-manager.git
 cd ff-power-manager
 sudo ./install.sh

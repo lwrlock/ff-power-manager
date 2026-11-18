@@ -412,7 +412,7 @@ class PresenceController:
             target_mode = (mode_low if want_60hz else mode_high) or current_mode
             if not target_mode:
                 return
-            high_label = f"{int(round(high_hz))} Hz (ProMotion)" if high_hz else "120 Hz"
+            high_label = f"{int(round(high_hz))} Hz (Adaptive)" if high_hz else "120 Hz"
             label_str = '60 Hz (Power Saver)' if want_60hz else high_label
 
             if current_mode == target_mode:
@@ -509,7 +509,7 @@ class PresenceController:
                 self._promo_idle_60hz = True
                 self._update_refresh_rate('max_battery')
                 try:
-                    (RUN_DIR / 'refresh.rate').write_text('60 Hz (ProMotion Idle)')
+                    (RUN_DIR / 'refresh.rate').write_text('60 Hz (ARR Idle)')
                 except Exception:
                     pass
                 self._arm_promo_active_watch()

@@ -23,6 +23,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "sensor_asm.h"
 
@@ -332,6 +333,130 @@ static void get_active_aspm_policy(char *out, size_t out_size) {
     out[out_size - 1] = '\0';
 }
 
+static int exec_argv_quiet(const char *const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+        execv(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+static int run_helper_quiet(const char *const helper_args[]) {
+    const char *helper = "/usr/local/lib/ff-power-manager/ff-power-helper";
+    const char *argv[12];
+    size_t i = 0;
+    if (geteuid() == 0) {
+        argv[i++] = helper;
+        for (size_t j = 0; helper_args[j] && i < 11; j++) argv[i++] = helper_args[j];
+        argv[i] = NULL;
+        return exec_argv_quiet(argv);
+    }
+    i = 0;
+    argv[i++] = "/usr/bin/sudo";
+    argv[i++] = "-n";
+    argv[i++] = helper;
+    for (size_t j = 0; helper_args[j] && i < 11; j++) argv[i++] = helper_args[j];
+    argv[i] = NULL;
+    if (exec_argv_quiet(argv) == 0) return 0;
+
+    i = 0;
+    argv[i++] = "/usr/bin/pkexec";
+    argv[i++] = helper;
+    for (size_t j = 0; helper_args[j] && i < 11; j++) argv[i++] = helper_args[j];
+    argv[i] = NULL;
+    return exec_argv_quiet(argv);
+}
+
+static int get_cpu_package_temp_c(void) {
+    DIR *hd = opendir("/sys/class/hwmon");
+    if (hd) {
+        struct dirent *de;
+        while ((de = readdir(hd)) != NULL) {
+            if (strncmp(de->d_name, "hwmon", 5) != 0) continue;
+            char np[512], hname[64] = "";
+            snprintf(np, sizeof(np), "/sys/class/hwmon/%s/name", de->d_name);
+            if (!read_sysfs_string(np, hname, sizeof(hname))) continue;
+            if (strcmp(hname, "coretemp") == 0 || strcmp(hname, "k10temp") == 0 || strcmp(hname, "zenpower") == 0) {
+                char tp[512];
+                snprintf(tp, sizeof(tp), "/sys/class/hwmon/%s/temp1_input", de->d_name);
+                int64_t mc = asm_fast_read_sysfs_int(tp);
+                if (mc > 10000 && mc < 120000) {
+                    closedir(hd);
+                    return (int)(mc / 1000);
+                }
+            }
+        }
+        closedir(hd);
+    }
+    DIR *td = opendir("/sys/class/thermal");
+    if (td) {
+        struct dirent *de;
+        while ((de = readdir(td)) != NULL) {
+            if (strncmp(de->d_name, "thermal_zone", 12) != 0) continue;
+            char tp[512], zt[64] = "";
+            snprintf(tp, sizeof(tp), "/sys/class/thermal/%s/type", de->d_name);
+            if (!read_sysfs_string(tp, zt, sizeof(zt))) continue;
+            if (strcmp(zt, "x86_pkg_temp") == 0 || strcmp(zt, "TCPU") == 0 || strcmp(zt, "acpitz") == 0) {
+                char vpath[512];
+                snprintf(vpath, sizeof(vpath), "/sys/class/thermal/%s/temp", de->d_name);
+                int64_t mc = asm_fast_read_sysfs_int(vpath);
+                if (mc > 10000 && mc < 120000) {
+                    closedir(td);
+                    return (int)(mc / 1000);
+                }
+            }
+        }
+        closedir(td);
+    }
+    return -1;
+}
+
+static bool has_tof_hardware(void) {
+    DIR *hd = opendir("/sys/class/hidraw");
+    if (!hd) return false;
+    struct dirent *de;
+    while ((de = readdir(hd)) != NULL) {
+        if (strncmp(de->d_name, "hidraw", 6) != 0) continue;
+        char uep[512], buf[1024] = "";
+        snprintf(uep, sizeof(uep), "/sys/class/hidraw/%s/device/uevent", de->d_name);
+        if (read_sysfs_string(uep, buf, sizeof(buf))) {
+            if (strstr(buf, "8087") && (strstr(buf, "0AC2") || strstr(buf, "0ac2"))) {
+                closedir(hd);
+                return true;
+            }
+        }
+    }
+    closedir(hd);
+    return false;
+}
+
+static void format_refresh_rate(const char *raw, char *out, size_t out_size) {
+    if (!raw || !raw[0] || strcmp(raw, "—") == 0) {
+        snprintf(out, out_size, "Adaptive");
+        return;
+    }
+    const char *at = strchr(raw, '@');
+    if (at) {
+        double hz = atof(at + 1);
+        bool has_vrr = (strstr(raw, "+vrr") != NULL);
+        if (hz >= 58.0 && hz <= 62.0) snprintf(out, out_size, "60 Hz (Power Saver)");
+        else if (hz > 0.0) snprintf(out, out_size, "%.0f Hz%s (Adaptive)", hz, has_vrr ? " + VRR" : "");
+        else snprintf(out, out_size, "%s", raw);
+        return;
+    }
+    snprintf(out, out_size, "%s", raw);
+}
+
 static void set_action_message(const char *msg) {
     snprintf(g_last_action_msg, sizeof(g_last_action_msg), "%s", msg);
     g_action_msg_expire = time(NULL) + 5; /* Visible for 5 seconds */
@@ -339,22 +464,29 @@ static void set_action_message(const char *msg) {
 
 static void toggle_presence_sensor(void) {
     if (is_sensor_enabled()) {
-        system("sudo -n /usr/local/lib/ff-power-manager/ff-power-helper sensor-service stop >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper sensor-service stop >/dev/null 2>&1 || true");
+        const char *args[] = { "sensor-service", "stop", NULL };
+        run_helper_quiet(args);
         asm_atomic_write_file("/run/ff-power-manager/.presence.tmp", STATE_FILE, "disabled\n", 9);
         set_action_message("✓ ToF Presence Sensor DISABLED (D4 Low Power Sleep Mode)");
     } else {
+        if (!has_tof_hardware()) {
+            set_action_message("✗ No ST VL53L1 ToF HID sensor detected on this machine");
+            return;
+        }
         mkdir(RUN_DIR, 0755);
         asm_atomic_write_file("/run/ff-power-manager/.presence.tmp", STATE_FILE, "unknown\n", 8);
-        system("sudo -n /usr/local/lib/ff-power-manager/ff-power-helper sensor-service start >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper sensor-service start >/dev/null 2>&1 || true");
+        const char *args[] = { "sensor-service", "start", NULL };
+        run_helper_quiet(args);
         set_action_message("✓ ToF Presence Sensor ENABLED (Active 1.2m Desk Detection)");
     }
 }
 
 static void ensure_sensor_enabled_by_default(void) {
-    if (!is_sensor_enabled()) {
+    if (has_tof_hardware() && !is_sensor_enabled()) {
         mkdir(RUN_DIR, 0755);
         asm_atomic_write_file("/run/ff-power-manager/.presence.tmp", STATE_FILE, "unknown\n", 8);
-        system("sudo -n /usr/local/lib/ff-power-manager/ff-power-helper sensor-service start >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper sensor-service start >/dev/null 2>&1 || true");
+        const char *args[] = { "sensor-service", "start", NULL };
+        run_helper_quiet(args);
     }
 }
 
@@ -389,13 +521,8 @@ static void apply_profile(int profile_id, bool battery_mode) {
 
     snprintf(g_active_profile_name, sizeof(g_active_profile_name), "%s", prof_name);
 
-    char cmd[512];
-    if (geteuid() == 0) {
-        snprintf(cmd, sizeof(cmd), "/usr/local/lib/ff-power-manager/ff-power-helper apply %s >/dev/null 2>&1", arg);
-    } else {
-        snprintf(cmd, sizeof(cmd), "/usr/local/bin/ffctl apply %s >/dev/null 2>&1 || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper apply %s >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper apply %s >/dev/null 2>&1", arg, arg, arg);
-    }
-    system(cmd);
+    const char *args[] = { "apply", arg, NULL };
+    run_helper_quiet(args);
 
 
     /* Read back hardware values to verify */
@@ -406,10 +533,6 @@ static void apply_profile(int profile_id, bool battery_mode) {
     }
     char aspm[64] = "—";
     get_active_aspm_policy(aspm, sizeof(aspm));
-    char refresh[128] = "—";
-    read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
-    if (strcmp(refresh, "2880x1800@60.000") == 0) strcpy(refresh, "60Hz");
-    else if (strcmp(refresh, "2880x1800@120.000+vrr") == 0) strcpy(refresh, "120Hz+VRR");
 
     char msg[256];
     snprintf(msg, sizeof(msg), "✓ Applied [%s] -> EPP: %s | Turbo: %s | ASPM: %s",
@@ -419,41 +542,48 @@ static void apply_profile(int profile_id, bool battery_mode) {
 
 static void toggle_turbo(void) {
     int64_t cur = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
-    char cmd[512];
     const char *t_arg = (cur == 0) ? "off" : "on";
-    snprintf(cmd, sizeof(cmd), "sudo -n /usr/local/lib/ff-power-manager/ff-power-helper set-turbo %s >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper set-turbo %s >/dev/null 2>&1 || true",
-             t_arg, t_arg);
-    system(cmd);
+    const char *args[] = { "set-turbo", t_arg, NULL };
+    run_helper_quiet(args);
 
     int64_t after = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
     if (after == 0) {
-        set_action_message("✓ Intel Turbo Boost ENABLED (Dynamic Frequency Boost - Hardware Verified)");
+        set_action_message("✓ Turbo Boost ENABLED (Dynamic Frequency Boost - Hardware Verified)");
+    } else if (after == 1) {
+        set_action_message("✓ Turbo Boost DISABLED (Max Efficiency - Hardware Verified)");
     } else {
-        set_action_message("✓ Intel Turbo Boost DISABLED (Max Efficiency - Hardware Verified)");
+        set_action_message("✗ Turbo toggle unavailable on current scaling driver");
     }
 }
 
 static void toggle_conservation_mode(void) {
-    const char *node = "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode";
-    if (access(node, F_OK) != 0) {
-        set_action_message("✗ Lenovo conservation mode not supported on this machine");
+    init_battery_path();
+    const char *lenovo_node = "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode";
+    char thresh_node[512];
+    snprintf(thresh_node, sizeof(thresh_node), "%s/charge_control_end_threshold", g_bat_path);
+
+    bool is_lenovo = (access(lenovo_node, F_OK) == 0);
+    bool is_thresh = (!is_lenovo && access(thresh_node, F_OK) == 0);
+    if (!is_lenovo && !is_thresh) {
+        set_action_message("✗ 80%% charge limit sysfs node not exposed on this machine");
         return;
     }
-    char cur[16] = "0";
-    read_sysfs_string(node, cur, sizeof(cur));
-    const char *new_val = (strcmp(cur, "1") == 0) ? "0" : "1";
 
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "/usr/local/bin/ffctl conservation %s >/dev/null 2>&1 || sudo -n /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo conservation_mode %s >/dev/null 2>&1 || pkexec /usr/local/lib/ff-power-manager/ff-power-helper set-lenovo conservation_mode %s >/dev/null 2>&1",
-             new_val, new_val, new_val);
-    system(cmd);
+    char cur[16] = "0";
+    read_sysfs_string(is_lenovo ? lenovo_node : thresh_node, cur, sizeof(cur));
+    bool currently_on = is_lenovo ? (strcmp(cur, "1") == 0) : (atoi(cur) <= 85);
+    const char *new_val = currently_on ? "0" : "1";
+
+    const char *args[] = { "set-lenovo", "conservation_mode", new_val, NULL };
+    run_helper_quiet(args);
 
     char after[16] = "0";
-    read_sysfs_string(node, after, sizeof(after));
-    if (strcmp(after, "1") == 0) {
-        set_action_message("✓ Lenovo Conservation Mode ENABLED (Stops charge at 80% to protect battery)");
+    read_sysfs_string(is_lenovo ? lenovo_node : thresh_node, after, sizeof(after));
+    bool now_on = is_lenovo ? (strcmp(after, "1") == 0) : (atoi(after) <= 85);
+    if (now_on) {
+        set_action_message("✓ 80%% Charge Conservation ENABLED (Protects battery cell lifespan)");
     } else {
-        set_action_message("✓ Lenovo Conservation Mode DISABLED (Full charge to 100% enabled)");
+        set_action_message("✓ 80%% Charge Conservation DISABLED (Charging to 100%% allowed)");
     }
 }
 
@@ -556,10 +686,9 @@ static void draw_tab_overview(int width) {
     double watts = get_battery_watts();
     double energy_wh = get_battery_energy_wh();
 
-    char refresh[128] = "—";
-    read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
-    if (strcmp(refresh, "2880x1800@60.000") == 0) strcpy(refresh, "60 Hz (Power Saver)");
-    else if (strcmp(refresh, "2880x1800@120.000+vrr") == 0) strcpy(refresh, "120 Hz + VRR (Ultra Smooth)");
+    char raw_refresh[128] = "", refresh[128] = "Adaptive";
+    read_sysfs_string(REFRESH_FILE, raw_refresh, sizeof(raw_refresh));
+    format_refresh_rate(raw_refresh, refresh, sizeof(refresh));
 
     char presence[64] = "disabled";
     read_sysfs_string(STATE_FILE, presence, sizeof(presence));
@@ -617,9 +746,13 @@ static void draw_tab_overview(int width) {
 
     print_box_line(width, "Battery Level : %s %%%-3ld  %s", bar, (long)cap, remaining_str);
 
+    char prod_ver[64] = "Linux Laptop";
+    if (!read_sysfs_string("/sys/class/dmi/id/product_version", prod_ver, sizeof(prod_ver))) {
+        read_sysfs_string("/sys/class/dmi/id/product_name", prod_ver, sizeof(prod_ver));
+    }
     print_horizontal_border(width, "├", "─", "┤");
-    print_box_line(width, "%sST VL53L1 TIME-OF-FLIGHT PRESENCE SENSOR RADAR%s", C_CYAN ESC_BOLD, ESC_RESET);
-    print_box_line(width, "OLED Display  : Samsung 2.8K 120Hz     Refresh Rate : %-26s", refresh);
+    print_box_line(width, "%sDISPLAY & ST VL53L1 TIME-OF-FLIGHT PRESENCE SENSOR%s", C_CYAN ESC_BOLD, ESC_RESET);
+    print_box_line(width, "Platform      : %-26s Refresh Rate : %-26s", prod_ver, refresh);
     print_box_line(width, "Presence State: %-46s", pres_txt);
 
     if (has_tel && tel.active) {
@@ -634,8 +767,10 @@ static void draw_tab_overview(int width) {
                        dist_bar,
                        C_CYAN ESC_BOLD, (unsigned long long)tel.packet_count, ESC_RESET,
                        tel.last_packet_sec_ago);
-    } else {
+    } else if (has_tof_hardware()) {
         print_box_line(width, "Sensor Range  : 1.2 m Distance Window  Status Note  : Waiting for hardware packets...");
+    } else {
+        print_box_line(width, "ToF Radar     : Not detected on this machine (optional IdeaPad/ISH hardware)");
     }
     print_box_line(width, "Sensor Toggle : Press %s[P]%s to toggle ToF sensor (%s%s%s)",
                    C_YELLOW ESC_BOLD, ESC_RESET,
@@ -643,20 +778,22 @@ static void draw_tab_overview(int width) {
                    ESC_RESET, "");
 
     print_horizontal_border(width, "├", "─", "┤");
-    char online_cores[64] = "0-15";
+    char online_cores[64] = "—";
     read_sysfs_string("/sys/devices/system/cpu/online", online_cores, sizeof(online_cores));
+    long onln = sysconf(_SC_NPROCESSORS_ONLN);
+    long conf = sysconf(_SC_NPROCESSORS_CONF);
     int64_t p_max_khz = asm_fast_read_sysfs_int("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
-    double p_max_ghz = p_max_khz > 0 ? (double)p_max_khz / 1e6 : 4.8;
-    int64_t temp_mc = asm_fast_read_sysfs_int("/sys/class/thermal/thermal_zone2/temp");
-    if (temp_mc <= 10000) temp_mc = asm_fast_read_sysfs_int("/sys/class/thermal/thermal_zone1/temp");
-    int temp_c = (temp_mc > 10000 && temp_mc < 115000) ? (int)(temp_mc / 1000) : 38;
+    double p_max_ghz = p_max_khz > 0 ? (double)p_max_khz / 1e6 : 0.0;
+    int temp_c = get_cpu_package_temp_c();
 
     print_box_line(width, "%sPROCESSOR & HARDWARE TUNING%s", C_CYAN ESC_BOLD, ESC_RESET);
-    print_box_line(width, "Hybrid Core Topology  : %s%-15s%s Package Temp      : %s%d°C%s (%.1f GHz Burst)",
-                   strcmp(online_cores, "0-15") == 0 ? C_YELLOW : C_GREEN,
-                   strcmp(online_cores, "0-15") == 0 ? "16/16 Active" : "Hybrid Active",
+    print_box_line(width, "CPU Cores Online      : %s%ld/%ld (%s)%s      Package Temp      : %s%d°C%s (%.1f GHz Burst)",
+                   onln == conf ? C_GREEN : C_YELLOW,
+                   onln, conf, online_cores,
                    ESC_RESET,
-                   temp_c < 50 ? C_GREEN : C_YELLOW, temp_c, ESC_RESET, p_max_ghz);
+                   (temp_c > 0 && temp_c < 60) ? C_GREEN : C_YELLOW,
+                   temp_c > 0 ? temp_c : 0,
+                   ESC_RESET, p_max_ghz);
     print_box_line(width, "CPU Energy Bias (EPP) : %-15s Intel Turbo Boost : %s", epp, turbo_str);
     print_box_line(width, "PCIe ASPM Link Policy : %-15s Daemon Overhead    : 0.0%% (Native ASM)", aspm);
 }
@@ -706,10 +843,10 @@ static void draw_tab_battery(int width) {
                    C_YELLOW ESC_BOLD, ESC_RESET, C_BOLD, ESC_RESET);
 
     print_horizontal_border(width, "├", "─", "┤");
-    print_box_line(width, "%sOLED & TOF SENSOR SAVINGS%s", C_CYAN ESC_BOLD, ESC_RESET);
-    print_box_line(width, "• Dynamic Refresh Rate : 60 Hz on battery saves ~1.8 W on Samsung 2.8K OLED.");
-    print_box_line(width, "• Zero-Touch Lock      : Auto-screensaver when walking > 1.2m away saves ~3.5 W.");
-    print_box_line(width, "• Instant Wake         : ToF sensor powers screen up the moment you return.");
+    print_box_line(width, "%sDISPLAY & PRESENCE POWER SAVINGS%s", C_CYAN ESC_BOLD, ESC_RESET);
+    print_box_line(width, "• Adaptive Refresh (ARR): Drops to 60 Hz after 8s idle on battery (~1.5-2.0 W panel savings).");
+    print_box_line(width, "• Zero-Touch Blanking  : Auto DPMS screen-off when walking > 1.2m away on supported ToF rigs.");
+    print_box_line(width, "• Instant Wake         : Zero-latency resume via Mutter.IdleMonitor + HID radar.");
 }
 
 static void draw_tab_ac(int width) {
@@ -719,10 +856,9 @@ static void draw_tab_ac(int width) {
     int64_t no_turbo = asm_fast_read_sysfs_int("/sys/devices/system/cpu/intel_pstate/no_turbo");
     const char *turbo_str = (no_turbo == 0) ? C_GREEN "ENABLED (All-Core Turbo)" : C_YELLOW "DISABLED";
 
-    char refresh[128] = "—";
-    read_sysfs_string(REFRESH_FILE, refresh, sizeof(refresh));
-    if (strcmp(refresh, "2880x1800@120.000+vrr") == 0) strcpy(refresh, "120 Hz + VRR (Active)");
-    else strcpy(refresh, "120 Hz Ready");
+    char raw_refresh[128] = "", refresh[128] = "Max Adaptive Hz";
+    read_sysfs_string(REFRESH_FILE, raw_refresh, sizeof(raw_refresh));
+    format_refresh_rate(raw_refresh, refresh, sizeof(refresh));
 
     print_box_line(width, "%sAC POWER & CHARGER STATUS%s", C_CYAN ESC_BOLD, ESC_RESET);
     print_box_line(width, "Mains Supply  : %s%-24s%s Charge Rate : %s%6.2f W%s",
@@ -731,7 +867,7 @@ static void draw_tab_ac(int width) {
                    ESC_RESET,
                    watts > 0 ? C_GREEN : C_GRAY, watts, ESC_RESET);
 
-    print_box_line(width, "Display Mode  : Samsung 2.8K OLED @ %s (Max Framerate)", refresh);
+    print_box_line(width, "Display Mode  : %s (Full Refresh / AC Unthrottled)", refresh);
 
     print_horizontal_border(width, "├", "─", "┤");
     print_box_line(width, "%sAC POWER PROFILES (Press key to apply)%s", C_CYAN ESC_BOLD, ESC_RESET);

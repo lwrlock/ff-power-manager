@@ -1,0 +1,10 @@
+# FF Power Manager v2.1.0
+
+**FF Power Manager v2.1.0** hardens security, eliminates hardcoded hardware assumptions, and adds scriptable kernel residency diagnostics for Intel and AMD Linux laptops.
+
+### Key Highlights
+- **Hardware & Residency Diagnostics (`ffctl doctor [--json]`):** Inspects `/sys/power/mem_sleep`, `/lib/systemd/system-sleep/ff-sleep-guard`, armed non-lid ACPI wake triggers (`/proc/acpi/wakeup`), active P-state/EPP drivers, PCI Runtime PM (`suspended` vs `active`), and conflicts with `tlp` / `auto-cpufreq` in `< 2 ms`, with `--json` output for `status`, `health`, and `doctor` + integrated live UI in GTK4 Diagnostics tab.
+- **Zero-Setuid Privilege Hardening:** Removed `04755` setuid-root permissions from `ffctl` (`0755`) and replaced `system()` shell invocations in `ffctl_native.c` / `ff_tui_native.c` with strict `fork()` + `execv()` PolicyKit / `sudo -n` delegation. Added both `sudo` (Ubuntu/Debian) and `wheel` (Fedora) support in `install.sh`, Polkit rules, and `udev` HID rules (`TAG+="uaccess"`).
+- **True Universal Topology & Sensor Discovery:** Replaced remaining 16-core/5.4GHz/Samsung-OLED assumptions across `core.py`, `ffctl_native.c`, `ff_tui_native.c`, and `extension.js`. Dynamically discovers P/E/LP-E cores (`detect_cpu_topology`), clamps frequencies to `cpuinfo_min/max_freq` and RAPL PL1/PL2 to OEM `constraint_0_max_power_uw`, pins IRQs/compositors dynamically to P-cores, discovers PCI SD Host Controllers (`0x0805*`), and resolves real CPU package temperature (`coretemp` / `k10temp` / `zenpower` / `x86_pkg_temp`).
+- **Focused Native Linux Identity:** Replaced all proprietary/marketing labels with accurate Linux kernel & Mutter subsystems (**Adaptive Refresh Rate**, **Hybrid Topology & C-State Tuning**, **Interactive QoS**).
+- **Daemon & Packaging Fixes:** `auto_boost.py` now preserves user-chosen `max_battery`/`cool_quiet` modes after load spikes and applies thermal guardrails on battery boosts; `build-deb.sh` now adds `prerm` cleanup, UI `Recommends`, and only sets `LIBVA_DRIVER_NAME=iHD` when Intel display hardware is present.

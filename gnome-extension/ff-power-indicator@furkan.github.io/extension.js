@@ -156,7 +156,7 @@ function getCpuTemp(hwmonMap) {
             }
         } catch (_) {}
     }
-    return '38°C';
+    return '--°C';
 }
 
 function discoverGpuNodes() {
@@ -253,13 +253,13 @@ function getBatteryDetails(batDir, onAc) {
 
 let _lastRaplUj = null;
 let _lastRaplTimeUs = null;
-let _lastRaplWatts = 3.4;
+let _lastRaplWatts = null;
 
 function getLiveWatts(batDir) {
     let powerUwh = readFile(`${batDir}/power_now`);
     if (powerUwh) {
         let w = parseInt(powerUwh, 10) / 1e6;
-        if (w > 0.5) return w;
+        if (w > 0.2) return w;
     }
     let coreTxt = readFile('/sys/class/powercap/intel-rapl:0:0/energy_uj') ||
                   readFile('/sys/class/powercap/intel-rapl:0/energy_uj');
@@ -272,7 +272,7 @@ function getLiveWatts(batDir) {
                 let dtSec = (nowUs - _lastRaplTimeUs) / 1e6;
                 if (dtSec >= 0.4 && nowUj >= _lastRaplUj) {
                     let w = 1.80 + (nowUj - _lastRaplUj) / (dtSec * 1e6);
-                    if (w > 0.5 && w < 140.0) {
+                    if (w > 0.2 && w < 180.0) {
                         _lastRaplWatts = w;
                     }
                     _lastRaplUj = nowUj;
@@ -447,7 +447,7 @@ class FFPowerIndicator extends PanelMenu.Button {
             this.menu.addMenuItem(this._oneshotSwitch);
         }
 
-        this._hzSwitch = new PopupMenu.PopupSwitchMenuItem('Pilde Akıcı ProMotion (60↔120 Hz)', true);
+        this._hzSwitch = new PopupMenu.PopupSwitchMenuItem('Pilde Akıllı Yenileme (60↔120 Hz ARR)', true);
         this._hzSwitch.connect('toggled', (item, state) => {
             updatePresenceConf('force_120hz_on_battery', state);
         });
@@ -522,7 +522,7 @@ class FFPowerIndicator extends PanelMenu.Button {
 
         const media = getActiveMediaInfo();
         const temp = getCpuTemp(this._hwmonMap || {});
-        let pwrStr = watts > 0.2 ? `${watts.toFixed(1)}W` : '3.4W';
+        let pwrStr = (watts !== null && watts > 0.2) ? `${watts.toFixed(1)}W` : '-- W';
         if (media && media.title) {
             let shortTitle = media.title.length > 20 ? media.title.substring(0, 18) + '…' : media.title;
             let statusIcon = media.status === 'Playing' ? '▶ ' : '⏸ ';
@@ -555,9 +555,9 @@ class FFPowerIndicator extends PanelMenu.Button {
         let sensorStatus = readFile('/run/ff-power-manager/presence.state') || 'disabled';
         this._tofSwitch.setToggleState(sensorStatus !== 'disabled');
 
-        let onlineCores = readFile('/sys/devices/system/cpu/online') || '0-15';
-        let pMaxKhz = parseInt(readFile('/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq') || '4800000', 10);
-        let pMaxGhz = (pMaxKhz / 1e6).toFixed(1);
+        let onlineCores = readFile('/sys/devices/system/cpu/online') || '--';
+        let pMaxKhz = parseInt(readFile('/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq') || '0', 10);
+        let pMaxGhz = pMaxKhz > 0 ? (pMaxKhz / 1e6).toFixed(1) : '--';
         let activeMode = readFile('/run/ff-power-manager/power.mode') || (onAc ? 'ac' : 'battery');
         let ctx = readFile('/run/ff-power-manager/active.context') || 'normal';
         let hzLabel = (readFile('/run/ff-power-manager/refresh.rate') || '120 Hz').split(' ')[0];
@@ -586,7 +586,7 @@ class FFPowerIndicator extends PanelMenu.Button {
                     this._savingsItem.label.text = `Bugün Tasarruf: ${offMin} dk ekran koruması • ~${wh} Wh kazanım`;
                 } catch (_) {}
             } else {
-                this._savingsItem.label.text = 'Bugün Tasarruf: ProMotion & ToF aktif';
+                this._savingsItem.label.text = 'Bugün Tasarruf: Akıllı Yenileme & ToF aktif';
             }
         }
 

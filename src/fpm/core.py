@@ -396,92 +396,115 @@ def detect_cpu_topology() -> tuple[list[int], list[int], list[int]]:
         return p_cores, e_cores, []
     return sorted(freqs.keys()), [], []
 
-def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False) -> None:
-    """
-    MacBook Dynamic Load-Aware Hybrid Topology:
-      - Normal Battery Load: 8 active cores (cpu0..1 @ 4.5GHz burst + cpu6..9 @ 3.2GHz + cpu14..15 LP-E @ 2.0GHz).
-        cpu2..5 (4 P-cores) and cpu10..13 (4 E-cores) are parked in deep sleep for max battery life.
-        Cores 14-15 LP-E handle audio/background on SoC tile without waking compute tile.
-        Active P-cores burst to 4.5 GHz within 2ms so 120Hz ProMotion UI never drops frames.
-      - High Load (>38% CPU or heavy workloads): All 16 cores unparked dynamically!
-      - AC: All 16 cores always active.
-    """
+def _parse_cpu_list(spec: str | None) -> list[int]:
+    """Parse Linux sysfs CPU range strings such as '0-5,8,10-15' into sorted CPU IDs."""
+    if not spec:
+        return []
+    cpus: list[int] = []
+    for part in spec.strip().split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '-' in part:
+            lo_s, hi_s = part.split('-', 1)
+            if lo_s.isdigit() and hi_s.isdigit():
+                lo, hi = int(lo_s), int(hi_s)
+                if hi >= lo:
+                    cpus.extend(range(lo, hi + 1))
+        elif part.isdigit():
+            cpus.append(int(part))
+    return sorted(set(cpus))
+
+
+def _clamp_cpu_freq(cpu_dir: str, desired_khz: int, fallback_min: int = 400000) -> int:
+    """Clamp target CPU frequency (kHz) to hardware [cpuinfo_min_freq, cpuinfo_max_freq]."""
+    hw_min_s = read_text(f'{cpu_dir}/cpufreq/cpuinfo_min_freq')
+    hw_max_s = read_text(f'{cpu_dir}/cpufreq/cpuinfo_max_freq')
+    hw_min = int(hw_min_s) if hw_min_s and hw_min_s.isdigit() else fallback_min
+    hw_max = int(hw_max_s) if hw_max_s and hw_max_s.isdigit() else desired_khz
+    return max(hw_min, min(hw_max, desired_khz))
+
+
+def set_hybrid_topology(mode: str | None = None, high_load: bool = False) -> None:
+    """Apply universal load-aware CPU frequency/EPP policy across P, E, and LP-E cores."""
     try:
         for p in glob.glob('/sys/class/powercap/intel-rapl*/energy_uj') + glob.glob('/sys/class/powercap/intel-rapl*/*/energy_uj'):
             os.chmod(p, 0o444)
     except Exception:
         pass
 
+    p_cores, e_cores, lpe_cores = detect_cpu_topology()
+    all_cores = sorted(set(p_cores + e_cores + lpe_cores))
+    if not all_cores:
+        return
+
     on_bat = on_battery_from_sysfs() if mode is None else (mode in ('battery', 'max_battery', 'maximum_battery'))
     is_extreme = mode in ('extreme_performance', 'performance')
     is_max_bat = mode in ('max_battery', 'maximum_battery')
 
-    if is_extreme:
-        # Wake all 16 cores first
-        for c in range(1, 16):
-            write_if_changed(f'/sys/devices/system/cpu/cpu{c}/online', '1')
-        for c in range(0, 16):
-            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
-            if c <= 5:
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '1800000')
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '5400000')
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'performance')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '0')
-            elif c <= 13:
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '1200000')
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '4500000')
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'performance')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '0')
-            else:
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '800000')
-                write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', '2500000')
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_performance')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '4')
-        return
-
-    # MacBook Dynamic Hybrid Mode (All 16 cores stay online; hardware C6/C10 power-gates idle cores)
-    # Never hotplug cores offline to avoid kernel stop_machine() pauses which drop frames at 120Hz!
-    online_cores = set(range(16))
-    if is_max_bat:
-        p_max, e_max, lpe_max = '2800000', '2200000', '1800000'
-    elif mode == 'cool_quiet':
-        p_max, e_max, lpe_max = '3400000', '2600000', '2000000'
-    elif on_bat:
-        if high_load:
-            p_max, e_max, lpe_max = '4800000', '3400000', '2400000'
-        else:
-            # ProMotion Battery Profile: 400 MHz deep-idle floor + 4.4 GHz instant single-core burst
-            p_max, e_max, lpe_max = '4400000', '2800000', '1800000'
-    else:
-        # On AC: All cores burst to maximum
-        p_max, e_max, lpe_max = '4800000', '3600000', '2400000'
-
-    # Ensure all 16 cores are online (eliminates scheduler latency & micro-stutter)
-    for c in range(1, 16):
+    # Keep all cores online so C6/C10 power-gating works without stop_machine() hotplug stalls
+    for c in all_cores:
         online_path = f'/sys/devices/system/cpu/cpu{c}/online'
         if os.path.exists(online_path):
             write_if_changed(online_path, '1')
 
-    # Ensure Intel P-State dynamic responsiveness & Turbo burst
-    write_if_changed('/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost', '1' if not is_max_bat else '0')
-    write_if_changed('/sys/devices/system/cpu/intel_pstate/no_turbo', '0' if not is_max_bat else '1')
+    if os.path.exists('/sys/devices/system/cpu/intel_pstate'):
+        write_if_changed('/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost', '1' if not is_max_bat else '0')
+        write_if_changed('/sys/devices/system/cpu/intel_pstate/no_turbo', '0' if not is_max_bat else '1')
 
-    # Intel Xe PSR1: active on battery (~2W display savings), disabled on AC for zero 120Hz wake latency
+    if is_extreme:
+        for c in p_cores:
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            hw_max_s = read_text(f'{cpu_dir}/cpufreq/cpuinfo_max_freq')
+            hw_max = int(hw_max_s) if hw_max_s and hw_max_s.isdigit() else 5400000
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', str(_clamp_cpu_freq(cpu_dir, 1800000)))
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', str(hw_max))
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'performance')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '0')
+        for c in e_cores:
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            hw_max_s = read_text(f'{cpu_dir}/cpufreq/cpuinfo_max_freq')
+            hw_max = int(hw_max_s) if hw_max_s and hw_max_s.isdigit() else 4500000
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', str(_clamp_cpu_freq(cpu_dir, 1200000)))
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', str(hw_max))
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'performance')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '0')
+        for c in lpe_cores:
+            cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
+            hw_max_s = read_text(f'{cpu_dir}/cpufreq/cpuinfo_max_freq')
+            hw_max = int(hw_max_s) if hw_max_s and hw_max_s.isdigit() else 2500000
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', str(_clamp_cpu_freq(cpu_dir, 800000)))
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', str(hw_max))
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'balance_performance')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '4')
+        return
+
+    if is_max_bat:
+        p_cap, e_cap, lpe_cap = 2800000, 2200000, 1800000
+    elif mode == 'cool_quiet':
+        p_cap, e_cap, lpe_cap = 3400000, 2600000, 2000000
+    elif on_bat:
+        p_cap, e_cap, lpe_cap = (4800000, 3400000, 2400000) if high_load else (4400000, 2800000, 1800000)
+    else:
+        p_cap, e_cap, lpe_cap = 4800000, 3600000, 2400000
+
+    # Intel PSR on battery reduces panel self-refresh power without AC wake-latency trade-offs
     psr_target = '2' if on_bat else '1'
     for psr_debug in glob.glob('/sys/kernel/debug/dri/*/i915_edp_psr_debug'):
         write_if_changed(psr_debug, psr_target)
 
-    for c in sorted(online_cores):
+    p_set = set(p_cores)
+    e_set = set(e_cores)
+    for c in all_cores:
         cpu_dir = f'/sys/devices/system/cpu/cpu{c}'
-        if c <= 5:
-            # On AC keep C3 (1048us wake latency) off on P-cores for razor-sharp 120Hz mouse/compositor wake
+        if c in p_set:
             c3_disable = f'{cpu_dir}/cpuidle/state3/disable'
             if os.path.exists(c3_disable):
                 write_if_changed(c3_disable, '1' if (not on_bat and not is_max_bat) else '0')
-            # On battery idle drop P-core floor to hardware 400 MHz (C10 power-gating) while HWP+Turbo burst to 4.4 GHz on touch
-            p_min = '400000' if (on_bat and not high_load) else '800000'
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', p_min)
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', p_max)
+            p_min = _clamp_cpu_freq(cpu_dir, 400000 if (on_bat and not high_load) else 800000)
+            p_max = _clamp_cpu_freq(cpu_dir, p_cap)
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', str(p_min))
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', str(p_max))
             if is_max_bat:
                 p_epp, p_epb = 'power', '15'
             elif mode == 'cool_quiet':
@@ -492,9 +515,9 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
                 p_epp, p_epb = 'balance_performance', '4'
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', p_epp)
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', p_epb)
-        elif c <= 13:
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', e_max)
+        elif c in e_set:
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', str(_clamp_cpu_freq(cpu_dir, 400000)))
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', str(_clamp_cpu_freq(cpu_dir, e_cap)))
             if is_max_bat:
                 e_epp, e_epb = 'power', '14'
             elif on_bat and not high_load:
@@ -504,19 +527,18 @@ def set_macbook_hybrid_topology(mode: str | None = None, high_load: bool = False
             write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', e_epp)
             write_if_changed(f'{cpu_dir}/power/energy_perf_bias', e_epb)
         else:
-            # Low-Power Skymont Island (cores 14, 15 on SoC tile)
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', '400000')
-            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', lpe_max)
-            if is_max_bat:
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15')
-            else:
-                write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if (on_bat and not high_load) else 'balance_performance')
-                write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15' if (on_bat and not high_load) else '6')
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_min_freq', str(_clamp_cpu_freq(cpu_dir, 400000)))
+            write_if_changed(f'{cpu_dir}/cpufreq/scaling_max_freq', str(_clamp_cpu_freq(cpu_dir, lpe_cap)))
+            is_bat_idle = is_max_bat or (on_bat and not high_load)
+            write_if_changed(f'{cpu_dir}/cpufreq/energy_performance_preference', 'power' if is_bat_idle else 'balance_performance')
+            write_if_changed(f'{cpu_dir}/power/energy_perf_bias', '15' if is_max_bat else ('15' if is_bat_idle else '6'))
+
+
+set_macbook_hybrid_topology = set_hybrid_topology
 
 
 def set_cpu_freq_floor(mode: str | None = None, high_load: bool = False) -> None:
-    set_macbook_hybrid_topology(mode, high_load=high_load)
+    set_hybrid_topology(mode, high_load=high_load)
 
 
 def set_gpu(value: str = 'system', mode: str | None = None) -> None:
@@ -643,10 +665,11 @@ def set_audio(value: str) -> None:
 
 
 def optimize_sd_card() -> None:
-    # Safely enable runtime PM for SD card controller
-    sd_dev = '/sys/bus/pci/devices/0000:57:00.0'
-    if os.path.exists(sd_dev):
-        write_if_changed(os.path.join(sd_dev, 'power/control'), 'auto')
+    """Safely enable runtime PM for any discovered PCI SD Host Controller (class 0x0805xx)."""
+    for dev in glob.glob('/sys/bus/pci/devices/*'):
+        cls = read_text(os.path.join(dev, 'class')) or ''
+        if cls.startswith('0x0805'):
+            write_if_changed(os.path.join(dev, 'power/control'), 'auto')
 
 
 def apply_kernel_tunings(mode: str) -> None:
@@ -670,7 +693,7 @@ def apply_kernel_tunings(mode: str) -> None:
         write_if_changed('/proc/sys/kernel/timer_migration', '1')
         for p in glob.glob('/sys/class/scsi_host/host*/link_power_management_policy'):
             write_if_changed(p, 'max_performance')
-    # MacBook Pro-grade low-latency scheduler, VM, ZRAM & NVMe responsiveness tunings
+    # Low-latency interactive scheduler, VM, ZRAM & NVMe I/O queue tunings
     write_if_changed('/proc/sys/kernel/sched_autogroup_enabled', '1')
     write_if_changed('/proc/sys/kernel/split_lock_mitigate', '0')
     write_if_changed('/proc/sys/vm/vfs_cache_pressure', '100')
@@ -720,7 +743,9 @@ BACKGROUND_QOS_PROCESSES = {
 
 
 def optimize_desktop_responsiveness() -> None:
-    """Apply MacBook-style QoS CPU scheduling priorities to foreground UI/IDE vs background tasks."""
+    """Apply interactive CPU scheduling priorities and P-core affinity to compositor/audio/UI processes."""
+    p_cores, _, _ = detect_cpu_topology()
+    p_set = set(p_cores) if p_cores else None
     for comm_path in glob.glob('/proc/[0-9]*/comm'):
         try:
             with open(comm_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -737,9 +762,9 @@ def optimize_desktop_responsiveness() -> None:
                 cur_nice = os.getpriority(os.PRIO_PROCESS, pid)
                 if cur_nice != target_nice:
                     os.setpriority(os.PRIO_PROCESS, pid, target_nice)
-                if name in ('gnome-shell', 'mutter', 'xwayland'):
+                if p_set and name in ('gnome-shell', 'mutter', 'xwayland'):
                     try:
-                        os.sched_setaffinity(pid, {0, 1, 2, 3, 4, 5})
+                        os.sched_setaffinity(pid, p_set)
                     except OSError:
                         pass
         except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
@@ -747,17 +772,26 @@ def optimize_desktop_responsiveness() -> None:
 
 
 def pin_interactive_irqs() -> None:
-    """Keep USB HID (xhci_hcd) and Intel Xe GPU IRQs on P-cores (0-5) instead of L3-less LP-E cores."""
+    """Pin USB HID (xhci_hcd) and GPU IRQs (xe/i915/amdgpu) to detected performance cores."""
+    p_cores, _, _ = detect_cpu_topology()
+    if not p_cores:
+        return
+    aff_spec = (
+        f'{p_cores[0]}-{p_cores[-1]}'
+        if p_cores == list(range(p_cores[0], p_cores[-1] + 1))
+        else ','.join(str(c) for c in p_cores)
+    )
     try:
         with open('/proc/interrupts', 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
     except OSError:
         return
     for line in lines:
-        if 'xhci_hcd' in line or line.rstrip().endswith(' xe'):
+        stripped = line.rstrip()
+        if 'xhci_hcd' in line or stripped.endswith((' xe', ' i915', ' amdgpu')):
             irq_str = line.split(':', 1)[0].strip()
             if irq_str.isdigit():
-                write_if_changed(f'/proc/irq/{irq_str}/smp_affinity_list', '0-5')
+                write_if_changed(f'/proc/irq/{irq_str}/smp_affinity_list', aff_spec)
 
 
 def set_smart_media_mode(active: bool) -> None:
@@ -801,7 +835,7 @@ def set_smart_media_mode(active: bool) -> None:
             pass
     else:
         mode = 'battery' if on_bat else 'ac'
-        set_macbook_hybrid_topology(mode)
+        set_hybrid_topology(mode)
         set_gpu('auto', mode)
         try:
             if state_file.exists():
@@ -811,7 +845,6 @@ def set_smart_media_mode(active: bool) -> None:
 
 
 def set_rapl_limits(mode: str) -> None:
-    # Intel Core Ultra 9 285H (Arrow Lake) Optimum Power Limits (MacBook-style cool & responsive)
     if mode in ('extreme_performance', 'performance'):
         pl1, pl2 = 65000000, 100000000
     elif mode == 'battery_boost':
@@ -822,10 +855,9 @@ def set_rapl_limits(mode: str) -> None:
         pl1, pl2 = 15000000, 32000000
     elif mode == 'cool_quiet':
         pl1, pl2 = 18000000, 30000000
-    else:  # ac / balanced optimum (quiet idle + crisp sustained boost)
+    else:  # ac balanced sustained TDP
         pl1, pl2 = 35000000, 55000000
 
-    # Set Lenovo IdeaPad ACPI firmware platform_profile to match
     if PLATFORM_PROFILE_PATH.exists():
         if mode in ('extreme_performance', 'performance'):
             write_if_changed(PLATFORM_PROFILE_PATH, 'performance')
@@ -840,10 +872,18 @@ def set_rapl_limits(mode: str) -> None:
     for d in rapl_base.glob('intel-rapl:*'):
         c0 = d / 'constraint_0_power_limit_uw'
         c1 = d / 'constraint_1_power_limit_uw'
+        c0_max_raw = read_text(d / 'constraint_0_max_power_uw')
+        c1_max_raw = read_text(d / 'constraint_1_max_power_uw')
+        eff_pl1 = pl1
+        eff_pl2 = pl2
+        if c0_max_raw and c0_max_raw.isdigit() and int(c0_max_raw) > 5_000_000:
+            eff_pl1 = min(pl1, int(c0_max_raw))
+        if c1_max_raw and c1_max_raw.isdigit() and int(c1_max_raw) > 5_000_000:
+            eff_pl2 = min(pl2, int(c1_max_raw))
         if c0.exists():
-            write_if_changed(c0, str(pl1))
+            write_if_changed(c0, str(eff_pl1))
         if c1.exists():
-            write_if_changed(c1, str(pl2))
+            write_if_changed(c1, str(eff_pl2))
 
 
 def apply(mode: str, cfg: dict | None = None) -> None:
@@ -1032,28 +1072,40 @@ def gpu_min_freq_current() -> str:
     for node in glob.glob('/sys/devices/pci0000:00/*/tile*/gt*/freq0/act_freq'):
         txt = read_text(node)
         if txt and txt.strip():
-            return f"{txt.strip()} MHz (Intel Arc Xe-LPG+)"
+            return f"{txt.strip()} MHz (Intel Xe SLPC)"
     for node in glob.glob('/sys/devices/pci0000:00/*/tile*/gt*/freq0/cur_freq'):
         txt = read_text(node)
         if txt and txt.strip():
-            return f"{txt.strip()} MHz (Intel Arc Xe-LPG+)"
+            return f"{txt.strip()} MHz (Intel Xe SLPC)"
+    for node in sorted(glob.glob('/sys/class/drm/card*/device/pp_dpm_sclk')):
+        txt = read_text(node) or ''
+        for line in txt.splitlines():
+            if '*' in line:
+                return f"{line.replace('*', '').strip()} (AMD Radeon DPM)"
     for node in ['/sys/class/drm/card1/gt_min_freq_mhz', '/sys/class/drm/card0/gt_min_freq_mhz']:
         txt = read_text(node)
         if txt and txt.strip():
-            return f"{txt.strip()} MHz (Stutter Prevention)"
+            return f"{txt.strip()} MHz (Intel i915)"
     return 'Dynamic'
 
 
 def vaapi_current() -> str:
     drv = os.environ.get('LIBVA_DRIVER_NAME')
-    if not drv:
-        if os.path.exists('/etc/profile.d/vaapi-intel.sh'):
-            drv = 'Intel iHD (Iris Xe Hardware)'
-        else:
-            drv = 'Intel iHD (Hardware)'
-    else:
-        drv = f"{drv} (Hardware)"
-    return drv
+    if drv:
+        return f"{drv} (Hardware)"
+    if os.path.exists('/etc/profile.d/vaapi-intel.sh'):
+        return 'Intel iHD (Hardware)'
+    for v_path in glob.glob('/sys/bus/pci/devices/*/vendor'):
+        cls_path = os.path.join(os.path.dirname(v_path), 'class')
+        cls_v = read_text(cls_path) or ''
+        if not cls_v.startswith('0x03'):
+            continue
+        vendor = read_text(v_path) or ''
+        if vendor == '0x8086':
+            return 'Intel iHD (Hardware)'
+        if vendor == '0x1002':
+            return 'AMD Mesa RadeonSI (Hardware)'
+    return 'Auto (DRM/Mesa)'
 
 
 def tcp_cc_current() -> str:
@@ -1178,15 +1230,20 @@ def set_lenovo_feature(name: str, value: bool | str | int) -> bool:
 
 
 def cpu_topology_current() -> str:
-    online = read_text('/sys/devices/system/cpu/online') or '0-15'
+    online_raw = read_text('/sys/devices/system/cpu/online') or ''
+    online_ids = _parse_cpu_list(online_raw)
+    total_cpus = os.cpu_count() or len(online_ids) or 1
+    online_count = len(online_ids) if online_ids else total_cpus
     p_freq = read_text('/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq') or '0'
     try:
         ghz = int(p_freq) / 1_000_000.0
     except Exception:
         ghz = 0.0
-    if online == '0-15':
-        return f"16/16 All-Core Active ({ghz:.1f} GHz Max Boost)"
-    return f"MacBook Hybrid ({online} Active • {ghz:.1f} GHz Burst)"
+    p_c, e_c, lpe_c = detect_cpu_topology()
+    if e_c or lpe_c:
+        tier = f"{len(p_c)}P+{len(e_c)}E+{len(lpe_c)}LP-E" if lpe_c else f"{len(p_c)}P+{len(e_c)}E"
+        return f"{online_count}/{total_cpus} Online ({tier} • {ghz:.1f} GHz)"
+    return f"{online_count}/{total_cpus} Online ({ghz:.1f} GHz Max)"
 
 
 def status_snapshot() -> dict:

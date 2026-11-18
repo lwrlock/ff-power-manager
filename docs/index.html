@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FF Power Manager — MacBook-Grade Linux Battery &amp; Power Management for Fedora / GNOME</title>
-  <meta name="description" content="FF Power Manager: Open-source Linux power manager delivering MacBook-like ~5W idle battery life on Lenovo IdeaPad with Intel Core Ultra. Features ToF presence sensor, zero-stutter Intel Arc GPU, OLED burn-in protection, auto GameMode boost, and GTK4 GUI — built in C and x86_64 Assembly.">
-  <meta name="keywords" content="ff-power-manager, linux power manager, fedora battery life, gnome power management, lenovo ideapad linux, intel core ultra battery, tof presence sensor linux, oled anti burn-in linux, intel arc gpu linux, battery conservation mode linux, linux 5w idle, tlp alternative, auto-cpufreq alternative, btop tui, ffctl, lwrlock, open source linux utility">
+  <title>FF Power Manager — Universal Linux Power, Adaptive Refresh &amp; Telemetry Engine</title>
+  <meta name="description" content="FF Power Manager: Open-source C, x86_64 Assembly, and Python/GTK4 Linux power manager. Features universal CPU/GPU auto-discovery, battery-only Adaptive Refresh (60-Max Hz), ToF presence radar, hardware residency diagnostics (ffctl doctor), and s2idle sleep guard.">
+  <meta name="keywords" content="ff-power-manager, linux power manager, ubuntu battery life, fedora battery life, gnome power management, lenovo ideapad linux, intel core ultra battery, amd pstate epp, tof presence sensor linux, adaptive refresh rate linux, s2idle drain fix, tlp alternative, auto-cpufreq alternative, btop tui, ffctl, lwrlock, open source linux utility">
   <meta name="author" content="Furkan (lwrlock)">
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
   <meta name="theme-color" content="#0b0f17">
@@ -13,8 +13,8 @@
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="FF Power Manager — MacBook-Grade Linux Battery &amp; Power Management">
-  <meta property="og:description" content="Open-source Linux power manager: ~5W idle on Lenovo IdeaPad, Intel Core Ultra battery tuning, ToF presence radar, OLED care, auto GameMode, GTK4 GUI. Built in C &amp; x86_64 Assembly.">
+  <meta property="og:title" content="FF Power Manager — Linux Power, Adaptive Refresh &amp; Residency Diagnostics">
+  <meta property="og:description" content="Open-source Linux power manager built in C, x86_64 Assembly, and Python/GTK4: universal Intel/AMD discovery, ffctl doctor residency audit, 0ms Adaptive Refresh, ToF radar, and s2idle wakeup guard.">
   <meta property="og:url" content="https://lwrlock.github.io/ff-power-manager/">
   <meta property="og:site_name" content="FF Power Manager">
   <meta property="og:image" content="https://opengraph.githubassets.com/1/lwrlock/ff-power-manager">
@@ -24,8 +24,8 @@
 
   <!-- Twitter / X Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="FF Power Manager — MacBook-Grade Linux Power &amp; Battery Manager">
-  <meta name="twitter:description" content="Open-source Linux power manager for Fedora/GNOME. ~5W idle, Lenovo hardware controls, ToF presence sensor, OLED anti-burn-in, GameMode boost. Built in C &amp; Assembly.">
+  <meta name="twitter:title" content="FF Power Manager — Universal Linux Power &amp; Residency Engine">
+  <meta name="twitter:description" content="Open-source Linux power manager for Ubuntu, Debian &amp; Fedora GNOME. Native C/ASM telemetry, ffctl doctor --json, Adaptive Refresh (60-Max Hz), ToF radar &amp; s2idle guard.">
   <meta name="twitter:image" content="https://opengraph.githubassets.com/1/lwrlock/ff-power-manager">
   <meta name="twitter:site" content="@lwrlock">
 
@@ -38,17 +38,17 @@
         "@type": "SoftwareApplication",
         "name": "FF Power Manager",
         "alternateName": "ffctl",
-        "softwareVersion": "1.2.0",
-        "operatingSystem": "Linux (Fedora, GNOME, Wayland)",
+        "softwareVersion": "2.1.0",
+        "operatingSystem": "Linux (Ubuntu, Debian, Fedora, GNOME Wayland)",
         "applicationCategory": "UtilitiesApplication",
         "applicationSubCategory": "Power Management",
-        "description": "MacBook-grade Linux power manager: ~5W idle on Lenovo IdeaPad, Intel Core Ultra battery tuning, ToF presence sensor, OLED anti-burn-in, GameMode auto-boost, GTK4 GUI. Built in C and x86_64 Assembly.",
+        "description": "Hybrid C/x86_64 Assembly + Python/GTK4 Linux laptop power manager with universal Intel/AMD topology discovery, ffctl doctor hardware residency diagnostics, battery-only Adaptive Refresh Rate, ToF presence radar, and s2idle wakeup guard.",
         "license": "https://opensource.org/licenses/MIT",
         "url": "https://lwrlock.github.io/ff-power-manager/",
         "downloadUrl": "https://github.com/lwrlock/ff-power-manager/releases/latest",
         "codeRepository": "https://github.com/lwrlock/ff-power-manager",
-        "releaseNotes": "https://github.com/lwrlock/ff-power-manager/releases/tag/v1.2.0",
-        "softwareRequirements": "Linux kernel 5.19+, GNOME Shell 44+, Fedora 38+",
+        "releaseNotes": "https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0",
+        "softwareRequirements": "Linux kernel 5.19+, GNOME Shell 44+, Ubuntu/Debian/Fedora",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "author": {
           "@type": "Person",
@@ -262,27 +262,27 @@
   <div class="container">
     <header>
       <div class="badge-bar">
-        <span class="badge">Linux / Fedora</span>
+        <span class="badge">Ubuntu &bull; Debian &bull; Fedora</span>
         <span class="badge">GNOME / Wayland</span>
         <span class="badge">C &amp; x86_64 ASM Engine</span>
-        <span class="badge green">&#x26A1; MacBook-Grade Tuning</span>
-        <span class="badge ai">&#x1F916; AI-Assisted</span>
-        <span class="badge">v1.2.0</span>
+        <span class="badge green">&#x26A1; Universal Hardware Discovery</span>
+        <span class="badge">v2.1.0</span>
       </div>
       <h1>FF Power Manager</h1>
       <p class="subtitle">
-        Ultra-low-latency, zero-overhead Linux power management and Lenovo ToF radar automation engine. Engineered for MacBook-like battery endurance, zero video stutter, and instant responsiveness.
+        Low-overhead Linux power management, battery-only Adaptive Refresh (60&ndash;165Hz), <code>ffctl doctor</code> hardware residency diagnostics, ST VL53L1 ToF presence automation, and <code>s2idle</code> sleep-drain protection.
       </p>
 
       <div class="cta-group">
         <a href="https://github.com/lwrlock/ff-power-manager" class="btn btn-primary">&#x1F517; View on GitHub</a>
-        <a href="https://github.com/lwrlock/ff-power-manager/releases/tag/v1.2.0" class="btn btn-outline">&#x1F4E6; Latest Release (v1.2.0)</a>
+        <a href="https://github.com/lwrlock/ff-power-manager/releases/tag/v2.1.0" class="btn btn-outline">&#x1F4E6; Latest Release (v2.1.0)</a>
       </div>
 
       <div class="terminal-box">
-        <span class="comment"># One-line installation &amp; full hardware optimization</span><br>
-        $ git clone https://github.com/lwrlock/ff-power-manager.git<br>
-        $ cd ff-power-manager &amp;&amp; sudo ./install.sh
+        <span class="comment"># Install via Debian/Ubuntu .deb package or build from source</span><br>
+        $ sudo apt install ./ff-power-manager_2.1.0_amd64.deb<br>
+        <span class="comment"># Or source install (Ubuntu / Debian / Fedora):</span><br>
+        $ git clone https://github.com/lwrlock/ff-power-manager.git &amp;&amp; cd ff-power-manager &amp;&amp; sudo ./install.sh
       </div>
     </header>
 
@@ -291,74 +291,74 @@
       <div class="grid">
         <div class="card">
           <div class="card-icon">&#x26A1;</div>
-          <h3>0.0% CPU &amp; Sub-Microsecond Engine</h3>
-          <p>Hand-written x86_64 assembly routines parse ST VL53L1 millimeter radar packets and write sysfs MSRs in microseconds with zero background CPU cycle waste. RAM usage &lt; 1 MB.</p>
+          <h3>Sub-Millisecond C &amp; Assembly Core</h3>
+          <p>Hand-written x86_64 assembly routines decode ST VL53L1 HID Report 4 packets and read sysfs power/thermal nodes directly via syscalls with minimal memory footprint.</p>
         </div>
 
         <div class="card">
-          <div class="card-icon">&#x1F34E;</div>
-          <h3>MacBook-Grade Race-to-Sleep</h3>
-          <p>Achieves Windows-level ~5W idle battery draw on Intel Core Ultra (Arrow Lake) without crippling the CPU. Turbo remains enabled on battery with responsive EPP so tasks burst and instantly return to C3/C8 sleep.</p>
+          <div class="card-icon">&#x1F50D;</div>
+          <h3>Hardware Residency Audit (<code>ffctl doctor</code>)</h3>
+          <p>Verifies <code>[s2idle]</code>/<code>[deep]</code> sleep hooks, armed ACPI wakeups, PCI Runtime PM ratios, P-state/EPP drivers, and conflicting daemons in &lt;2ms with <code>--json</code> export.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F6E1;</div>
-          <h3>Lenovo IdeaPad Integration (VPC2004)</h3>
-          <p>Single-click hardware control for 80% Battery Conservation Mode (protects chemical cell lifespan), Fn-Lock hotkeys, Always-On USB charging, and ACPI platform profiles.</p>
+          <h3>Universal OEM &amp; Lenovo ACPI Care</h3>
+          <p>One-click 80% Battery Conservation (IdeaPad <code>VPC2004</code> + standard <code>charge_control_end_threshold</code>), One-Shot 100% Charge Watchdog, Fn-Lock, and USB charge control.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F50B;</div>
-          <h3>Battery Health &amp; Analytics</h3>
-          <p>Real-time hardware fuel-gauge diagnostics: True factory design capacity (Wh), cycle counter, degradation percentage, voltage telemetry, and charge mode via <code>ffctl health</code>.</p>
+          <h3>Battery Health &amp; Telemetry HUD</h3>
+          <p>Real-time fuel-gauge analytics: design vs full-charge capacity (Wh), cycle count, voltage, NVMe/Wi-Fi thermals, and machine-readable JSON via <code>ffctl health --json</code>.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F453;</div>
-          <h3>GNOME Top Bar Quick Power Indicator</h3>
-          <p>Lightweight GNOME Shell extension displaying live wattage draw (<code>⚡ 5.2 W</code>) in the top panel with a quick-switch popover for profiles, ToF sensor, and conservation toggles.</p>
+          <h3>GNOME Top Bar Quick Indicator</h3>
+          <p>Lightweight GNOME Shell extension displaying live wattage draw, SSD/Wi-Fi °C, GPU clocks, Wh savings counter, MPRIS controls, Focus Mode, and quick profile toggles.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F3A8;</div>
-          <h3>Samsung 2.8K OLED Screen Care</h3>
-          <p>Anti-burn-in engine with subtle inactivity dimming (45s timeout) and pure black (#000000) 0W pixel shutdown when walking away, preserving organic emitters and saving battery.</p>
+          <h3>OLED Care &amp; Zero-Touch Blanking</h3>
+          <p>Anti-burn-in panel shift on HiDPI scales, 15s inactivity dimming, and instant DPMS screen-off when walking away without disturbing active video/audio playback.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F680;</div>
-          <h3>Auto Dynamic Boost &amp; GameMode</h3>
-          <p>Zero-overhead process watcher detects gaming (Steam, Gamescope, Lutris), 3D renderers (Blender, OBS), and compilers (gcc, cargo, clang) to auto-engage performance mode.</p>
+          <h3>Auto Dynamic Boost &amp; Thermal Guardrail</h3>
+          <p>Zero-overhead process watcher boosts compilers (<code>gcc</code>, <code>cargo</code>), Proton/Wine games, and local LLMs, while tapering RAPL PL1 limits at &ge;90&deg;C to prevent throttling.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F3AC;</div>
-          <h3>Zero-Stutter Intel Arc GPU &amp; VA-API</h3>
-          <p>Eliminates video stuttering in GNOME balanced mode by enforcing an 800 MHz hardware base clock floor and unlocking 2350 MHz boost, paired with hardware Intel iHD VA-API decoding.</p>
+          <h3>Universal Intel Xe / i915 &amp; AMD Support</h3>
+          <p>Dynamically discovers P/E/LP-E cores, Intel Xe GuC SLPC, i915, and AMD Radeon DPM / <code>k10temp</code> nodes, pinning interactive compositor and HID/GPU IRQs cleanly.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F4E1;</div>
           <h3>Live ToF Proximity Radar</h3>
-          <p>Continuous millimeter-precision distance tracking. Automatically blanks the display when you walk away (> 1.2m) and wakes instantly when you sit down, with intelligent keyboard/mouse safety.</p>
+          <p>Continuous millimeter-precision distance tracking over Intel ISH HID. Blanks display beyond 1.2m and wakes cleanly upon return, using zero webcam access.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F5A5;</div>
-          <h3>Dynamic 60Hz / 120Hz + VRR</h3>
-          <p>Automatically switches your 2.8K OLED screen down to 60Hz on battery (~2W direct savings) and restores butter-smooth 120Hz + Variable Refresh Rate on AC power.</p>
+          <h3>Battery-Only Adaptive Refresh (ARR)</h3>
+          <p>Drops refresh rate to 60Hz after 8s idle strictly on battery via <code>Mutter.IdleMonitor</code> and restores full 120Hz+ VRR at 0ms on keyboard or touchpad input.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">&#x1F4CA;</div>
-          <h3>btop-Style TUI Dashboard</h3>
-          <p>Interactive terminal dashboard (<code>ff-tui</code>) with single-key profile switching, 80% conservation toggle (<code>[K]</code>), live millimeter radar stream, and real-time sysfs hardware verification.</p>
+          <h3>Interactive TUI Dashboard</h3>
+          <p>Tabbed terminal dashboard (<code>ff-tui</code>) with single-key profile switching, 80% conservation toggle (<code>[K]</code>), live ToF radar bar, and sysfs read-back checks.</p>
         </div>
 
         <div class="card">
-          <div class="card-icon">&#x1F5A5;</div>
-          <h3>Modern GTK4 / Libadwaita GUI</h3>
-          <p>Sleek desktop application with hero telemetry cards, Lenovo hardware switches, Battery Health analytics card, and ToF radar visualizations.</p>
+          <div class="card-icon">&#x1F512;</div>
+          <h3>Non-Setuid Privilege Hardening</h3>
+          <p>Unprivileged CLI/TUI binaries delegating privileged sysfs writes via explicit <code>fork()/execv()</code> PolicyKit boundaries across Ubuntu (<code>sudo</code>) and Fedora (<code>wheel</code>).</p>
         </div>
       </div>
     </section>
@@ -370,49 +370,44 @@
           <tr>
             <th>Command</th>
             <th>Description</th>
-            <th>Execution Speed</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><code>ffctl status</code></td>
-            <td>Instant hardware status (Watts, battery %, refresh rate, CPU EPP, ToF distance).</td>
-            <td>&lt; 0.8 ms (Native C)</td>
+            <td><code>ffctl status [--json]</code></td>
+            <td>Live hardware status (Watts, battery %, CPU package temp, ARR Hz, EPP, ToF).</td>
+            <td>Native C &bull; JSON ready</td>
           </tr>
           <tr>
-            <td><code>ffctl health</code></td>
+            <td><code>ffctl doctor [--json]</code></td>
+            <td>Inspect sleep guard hook, ACPI wakeups, PCI PM ratios, and daemon conflicts.</td>
+            <td>&lt; 2 ms Hardware Audit</td>
+          </tr>
+          <tr>
+            <td><code>ffctl health [--json]</code></td>
             <td>Display factory design capacity, full capacity, cycle count, and health score.</td>
-            <td>&lt; 0.5 ms (Native C)</td>
-          </tr>
-          <tr>
-            <td><code>ffctl lenovo</code></td>
-            <td>Inspect Lenovo IdeaPad hardware integration status (Conservation, Fn-lock, USB charge).</td>
-            <td>Direct Hardware Sysfs</td>
+            <td>Native Sysfs</td>
           </tr>
           <tr>
             <td><code>ffctl conservation on|off</code></td>
-            <td>Toggle 80% battery conservation mode to prolong battery health.</td>
-            <td>Instant Sysfs</td>
+            <td>Toggle 80% battery conservation (Lenovo VPC2004 &amp; standard sysfs thresholds).</td>
+            <td>PolicyKit / Sysfs</td>
           </tr>
           <tr>
             <td><code>ffctl sensor live</code></td>
             <td>Stream continuous real-time distance and packet telemetry to terminal.</td>
-            <td>Raw HID / Real-Time</td>
+            <td>Raw HID / Sub-ms ASM</td>
           </tr>
           <tr>
-            <td><code>ffctl apply battery</code></td>
-            <td>Apply optimized battery profile (EPP balance_performance, Turbo ON, PCIe ASPM powersupersave).</td>
-            <td>Direct Hardware Sysfs</td>
+            <td><code>ffctl apply [profile]</code></td>
+            <td>Apply <code>battery</code>, <code>ac</code>, <code>cool_quiet</code>, <code>max_battery</code>, or <code>extreme_performance</code>.</td>
+            <td>Hardware Verified</td>
           </tr>
           <tr>
-            <td><code>ffctl apply ac</code></td>
-            <td>Switch to full AC performance mode with 120Hz + VRR and max clocks.</td>
-            <td>Direct Hardware Sysfs</td>
-          </tr>
-          <tr>
-            <td><code>ff-tui</code></td>
-            <td>Launch full interactive terminal dashboard.</td>
-            <td>Native ncurses</td>
+            <td><code>ff-tui</code> / <code>ff-power-manager</code></td>
+            <td>Launch interactive terminal dashboard or GTK4/Libadwaita control center.</td>
+            <td>ncurses &amp; GTK4</td>
           </tr>
         </tbody>
       </table>
@@ -425,22 +420,19 @@
           <div class="about-avatar">&#x1F4BB;</div>
           <div class="about-title">
             <h3>Furkan (lwrlock)</h3>
-            <div class="about-meta">17 Years Old &bull; Computer Engineering Student &bull; Linux Enthusiast</div>
+            <div class="about-meta">18 Years Old &bull; Computer Engineering Student &bull; Linux Systems Developer</div>
           </div>
         </div>
         <p class="about-text">
-          Hi! I am Furkan, an 18-year-old Computer Engineering student. I created <strong>FF Power Manager</strong> to solve real-world hardware driver quirks on cutting-edge Intel Core Ultra (Arrow Lake) architecture and bring a true <strong>MacBook-like experience</strong> to Linux (Fedora &amp; GNOME): rock-solid battery endurance without sacrificing a single ounce of UI responsiveness, zero video stutter on 2.8K OLED panels, and zero background CPU overhead.
-        </p>
-        <p class="about-text">
-          <strong>&#x1F916; Transparent AI Collaboration:</strong> This project was engineered in continuous pair-programming collaboration with <strong>Google DeepMind Antigravity</strong>. AI assistance was utilized as a technical multiplier for reverse-engineering the Lenovo ST VL53L1 Time-of-Flight HID sensor protocol, authoring optimized x86_64 assembly routines, tracking Linux kernel power state transitions (Package C-States, PCIe ASPM, NVMe APST), and crafting the native GTK4 / Libadwaita interface.
+          Hi! I am Furkan, an 18-year-old Computer Engineering student. I built <strong>FF Power Manager</strong> to solve real Linux laptop power and firmware quirks—such as high idle draw, <code>s2idle</code> suspend wakeups, hybrid P/E/LP-E scheduler latency, static OLED refresh waste, and Intel ISH ToF presence integration—using direct kernel sysfs interfaces, C/x86_64 assembly, and GNOME Wayland D-Bus APIs.
         </p>
         <div class="pill-group">
           <span class="pill">C &amp; x86_64 Assembly</span>
-          <span class="pill">Linux Kernel Sysfs &amp; MSRs</span>
-          <span class="pill">Intel Core Ultra &amp; Arc Pro</span>
-          <span class="pill">Samsung 2.8K OLED</span>
-          <span class="pill">Fedora &amp; GNOME Wayland</span>
-          <span class="pill">Open Source</span>
+          <span class="pill">Linux Kernel Sysfs &amp; RAPL</span>
+          <span class="pill">Intel &amp; AMD P-State / GPU</span>
+          <span class="pill">Mutter IdleMonitor ARR</span>
+          <span class="pill">Ubuntu &amp; Fedora GNOME</span>
+          <span class="pill">MIT Open Source</span>
         </div>
       </div>
     </section>

@@ -283,14 +283,14 @@ class MainWindow(Adw.ApplicationWindow):
                 application_name='FF Power Manager',
                 application_icon='preferences-system-power',
                 developer_name='Furkan (@lwrlock)',
-                version='1.2.0',
+                version='2.1.0',
                 website='https://lwrlock.github.io/ff-power-manager/',
                 issue_url='https://github.com/lwrlock/ff-power-manager/issues',
                 license_type=Gtk.License.MIT_X11,
                 comments=(
-                    "Engineered for Lenovo IdeaPad Pro 5 14IAH10 and modern Intel mobile platforms.\n"
-                    "MacBook-level battery efficiency, zero-stutter performance architecture.\n\n"
-                    "Developed as an open-source initiative by an 18-year-old computer engineering student in collaboration with AI."
+                    "Universal Linux power management, dynamic CPU/GPU topology tuning, "
+                    "battery-only adaptive refresh rate, and ST VL53L1 HID presence automation.\n\n"
+                    "Open-source systems engineering project by Furkan (@lwrlock, 18-year-old CS/CE student)."
                 ),
             )
             dialog.present(self)
@@ -301,12 +301,12 @@ class MainWindow(Adw.ApplicationWindow):
                 program_name='FF Power Manager',
                 logo_icon_name='preferences-system-power',
                 authors=['Furkan (@lwrlock)'],
-                version='1.2.0',
+                version='2.1.0',
                 website='https://lwrlock.github.io/ff-power-manager/',
                 license_type=Gtk.License.MIT_X11,
                 comments=(
-                    "Engineered for Lenovo IdeaPad Pro 5 14IAH10 and modern Intel mobile platforms.\n"
-                    "MacBook-level battery efficiency, zero-stutter performance architecture."
+                    "Universal Linux power management, dynamic CPU/GPU topology tuning, "
+                    "battery-only adaptive refresh rate, and ST VL53L1 HID presence automation."
                 ),
             )
             dialog.present()
@@ -344,13 +344,13 @@ class MainWindow(Adw.ApplicationWindow):
             ('mode', 'Power Source', 'ac-adapter-symbolic'),
             ('watts', 'Active Power Draw', 'energy-battery-symbolic'),
             ('battery_percent', 'Battery Charge Level', 'battery-level-80-symbolic'),
-            ('cpu_topology', 'Hybrid CPU Core Topology', 'processor-symbolic'),
+            ('cpu_topology', 'CPU Core Topology', 'processor-symbolic'),
             ('refresh_rate', 'Display Refresh Rate', 'video-display-symbolic'),
             ('gnome_profile', 'GNOME Power Profile', 'preferences-system-symbolic'),
             ('epp', 'CPU Energy Preference (EPP)', 'applications-science-symbolic'),
-            ('turbo', 'Intel Turbo Boost', 'speedometer-symbolic'),
+            ('turbo', 'Turbo Boost', 'speedometer-symbolic'),
             ('pcie_aspm', 'PCIe ASPM Link Policy', 'drive-harddisk-symbolic'),
-            ('gpu_perf', 'Intel Arc GPU Base Clock', 'applications-graphics-symbolic'),
+            ('gpu_perf', 'GPU Clock &amp; Power Profile', 'applications-graphics-symbolic'),
             ('vaapi', 'Hardware Video Acceleration', 'media-playback-start-symbolic'),
             ('net_opt', 'TCP Congestion Control', 'network-wireless-symbolic'),
             ('zram', 'Compressed Memory (ZRAM)', 'drive-multidisk-symbolic'),
@@ -544,30 +544,30 @@ class MainWindow(Adw.ApplicationWindow):
     def _presence_page(self) -> Adw.PreferencesPage:
         page = Adw.PreferencesPage(title='Display &amp; Presence', icon_name='system-lock-screen-symbolic')
 
-        # Samsung 2.8K OLED Display Optimization
+        # Adaptive Display Refresh Optimization
         display_grp = Adw.PreferencesGroup(
-            title='Smart Display Refresh (Samsung 2.8K OLED)',
-            description='Seamlessly balances battery longevity and extreme 120Hz smoothness.'
+            title='Adaptive Display Refresh Rate (Mutter / Wayland)',
+            description='Balances battery endurance and smooth high-refresh response without manual switching.'
         )
         page.add(display_grp)
         self.promotion_switch = SwitchRowCls(
-            title='ProMotion 120Hz + VRR (MacBook Style)',
-            subtitle='Keeps 120 Hz active on battery. Hardware VRR drops to 30-48Hz during static screens to save power.'
+            title='Battery-Only Adaptive Refresh (60 ↔ Max Hz)',
+            subtitle='Steps down to 60 Hz after 8s idle on battery and restores max refresh at 0ms on input.'
         )
         self.promotion_switch.set_active(bool(self.pcfg.get('promotion_120hz', True)))
         display_grp.add(self.promotion_switch)
 
         self.refresh_switch = SwitchRowCls(
             title='Dynamic Refresh Rate Switching',
-            subtitle='Enables automatic display mode management via Mutter D-Bus.'
+            subtitle='Enables automatic display mode management via Mutter DisplayConfig D-Bus.'
         )
         self.refresh_switch.set_active(bool(self.pcfg.get('auto_refresh_rate', True)))
         display_grp.add(self.refresh_switch)
 
-        # OLED Screen Care & Anti-Burn-in
+        # Panel Screen Care & Anti-Burn-in
         oled_grp = Adw.PreferencesGroup(
-            title='Samsung 2.8K OLED Anti-Burn-in &amp; Screen Care',
-            description='Extends organic OLED panel life and eliminates static burn-in risk.'
+            title='Panel Screen Care &amp; Inactivity Dimming',
+            description='Reduces static display burn-in risk and lowers panel draw when idle.'
         )
         page.add(oled_grp)
 
@@ -675,6 +675,30 @@ class MainWindow(Adw.ApplicationWindow):
             group.add(row)
             self.diag_rows.append(row)
 
+        # Hardware Residency & Kernel Audit (ffctl doctor)
+        audit_grp = Adw.PreferencesGroup(
+            title='Hardware &amp; Power Residency Audit (ffctl doctor)',
+            description='Live kernel verification for S0ix sleep guard, ACPI wakeups, PCI Runtime PM, and daemon conflicts.'
+        )
+        page.add(audit_grp)
+        self.audit_rows = {}
+        for key, label in [
+            ('sleep', 'Suspend &amp; s2idle Wakeup Guard'),
+            ('cpu_driver', 'CPU Scaling Driver &amp; Active EPP'),
+            ('pci_pm', 'PCI Runtime Power Management &amp; ASPM'),
+            ('conflicts', 'Daemon Conflict Check (tlp / auto-cpufreq)'),
+        ]:
+            arow = self._action_row(label, 'Inspecting hardware state...')
+            audit_grp.add(arow)
+            self.audit_rows[key] = arow
+
+        audit_btn = Gtk.Button(label='Run Audit Now', valign=Gtk.Align.CENTER)
+        audit_btn.add_css_class('pill-btn')
+        audit_btn.connect('clicked', lambda *_: (self._refresh_doctor_audit(), self.toast('Hardware residency audit updated.')))
+        audit_action_row = self._action_row('Re-run Kernel &amp; PCI Residency Check', 'Executes native ffctl doctor --json probe in < 2 ms.')
+        audit_action_row.add_suffix(audit_btn)
+        audit_grp.add(audit_action_row)
+
         safety = Adw.PreferencesGroup(title='Safety &amp; Factory Defaults')
         page.add(safety)
         reset = self._action_row(
@@ -708,7 +732,7 @@ class MainWindow(Adw.ApplicationWindow):
             'mode': 'Battery (Discharging)' if s['mode'] == 'battery' else 'AC Power (Mains Online)',
             'watts': '—' if s['watts'] is None else f"{s['watts']:.2f} W",
             'battery_percent': '—' if s['battery_percent'] is None else f"{s['battery_percent']}%",
-            'cpu_topology': s.get('cpu_topology', 'MacBook Hybrid 8/16 Active'),
+            'cpu_topology': s.get('cpu_topology', 'Dynamic Online'),
             'refresh_rate': s.get('refresh_rate', '—'),
             'gnome_profile': s['gnome_profile'] or '—',
             'epp': s['epp'] or '—',
@@ -788,6 +812,35 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(self, 'diag_rows'):
             for row in self.diag_rows:
                 row.set_subtitle('Running (Active)' if is_active(row._unit, row._user) else 'Stopped (Inactive)')
+        self._refresh_doctor_audit()
+
+    def _refresh_doctor_audit(self) -> None:
+        if not hasattr(self, 'audit_rows'):
+            return
+        ffctl_bin = '/usr/local/bin/ffctl' if os.path.exists('/usr/local/bin/ffctl') else './ffctl'
+        try:
+            out = subprocess.check_output([ffctl_bin, 'doctor', '--json'], text=True, stderr=subprocess.DEVNULL, timeout=2.0)
+            d = json.loads(out)
+        except Exception:
+            for r in self.audit_rows.values():
+                r.set_subtitle('ffctl doctor unavailable (run make build / install)')
+            return
+
+        guard = 'installed' if d.get('sleep_guard_hook') else 'missing'
+        self.audit_rows['sleep'].set_subtitle(
+            f"Mode: {d.get('mem_sleep', 'unknown')} | Sleep Guard: {guard} | {d.get('acpi_non_lid_wakeups_enabled', 0)} ACPI wake triggers"
+        )
+        self.audit_rows['cpu_driver'].set_subtitle(
+            f"Driver: {d.get('scaling_driver', '—')} | EPP: {d.get('epp', '—')}"
+        )
+        self.audit_rows['pci_pm'].set_subtitle(
+            f"{d.get('pci_devices_suspended', 0)}/{d.get('pci_devices_total', 0)} PCI devices suspended | ASPM: {d.get('pcie_aspm', '—')}"
+        )
+        if d.get('conflict_tlp') or d.get('conflict_auto_cpufreq'):
+            conf = 'tlp.service' if d.get('conflict_tlp') else 'auto-cpufreq.service'
+            self.audit_rows['conflicts'].set_subtitle(f"WARNING: Conflicting {conf} detected!")
+        else:
+            self.audit_rows['conflicts'].set_subtitle('OK — No conflicting power daemons active')
 
     def _toggle_lenovo(self, feat: str, active: bool) -> None:
         if self._lenovo_syncing:

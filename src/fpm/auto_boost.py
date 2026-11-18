@@ -161,6 +161,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
     boosted = False
     smart_media_active = False
     dynamic_cores_unparked = False
+    pre_boost_battery_mode = 'battery'
     last_seen_time = 0.0
     last_high_load_time = 0.0
     last_tune_time = 0.0
@@ -179,12 +180,12 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
         cpu_usage, prev_idle, prev_total = get_cpu_load(prev_idle, prev_total)
         now = time.monotonic()
 
-        # Smart Media Mode: Lock low-power 2.2 GHz ceiling during battery video playback
+        # Smart Media Mode: Balance GPU & CPU ceilings during battery video playback
         if is_media_playing and not smart_media_active and not boosted:
             smart_media_active = True
             try:
                 set_smart_media_mode(True)
-                sys.stdout.write("Auto Dynamic Boost: Smart Media Video Mode engaged (capping 2.2 GHz on battery).\n")
+                sys.stdout.write("Auto Dynamic Boost: Smart Media Video Mode engaged (balanced clocks + GPU RPN floor on battery).\n")
                 sys.stdout.flush()
             except Exception as exc:
                 sys.stderr.write(f"Failed to engage Smart Media Mode: {exc}\n")
@@ -200,14 +201,19 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
         heavy = find_heavy_process(cpu_usage) if not is_media_playing else None
 
         if on_bat:
-            # Dynamic Responsiveness on Battery: All 16 cores remain online.
-            # Idle cores enter C6/C10 autonomously (0W); 30%+ bursts engage battery_boost immediately.
+            # Dynamic Responsiveness on Battery: keep all cores online for C6/C10 power-gating
+            # and burst into battery_boost on sustained load or detected workloads.
             is_high_load = (heavy is not None) or (cpu_usage >= 30.0)
 
             if is_high_load:
                 last_high_load_time = now
                 if not dynamic_cores_unparked:
                     dynamic_cores_unparked = True
+                    cur_mode = (read_text(RUN_DIR / 'power.mode') or 'battery').strip()
+                    if cur_mode in ('battery', 'max_battery', 'maximum_battery', 'cool_quiet'):
+                        pre_boost_battery_mode = cur_mode
+                    else:
+                        pre_boost_battery_mode = 'battery'
                     reason = f"heavy process '{heavy}'" if heavy else f"CPU load {cpu_usage:.1f}%"
                     sys.stdout.write(f"Auto Dynamic Boost: Demand spike detected ({reason}). Boosting CPU, GPU & RAPL on battery.\n")
                     sys.stdout.flush()
@@ -218,15 +224,25 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
                         optimize_desktop_responsiveness()
                     except Exception as exc:
                         sys.stderr.write(f"Failed to engage high load boost: {exc}\n")
+                elif get_max_pkg_temp_c() >= 90 and not getattr(run_watcher, '_bat_thermal_capped', False):
+                    run_watcher._bat_thermal_capped = True
+                    sys.stdout.write("Auto Dynamic Boost: Battery Thermal Guardrail (>=90C). Softening PL1 to battery limits.\n")
+                    sys.stdout.flush()
+                    try:
+                        set_rapl_limits('battery')
+                    except Exception:
+                        pass
             else:
                 if dynamic_cores_unparked and (now - last_high_load_time >= 4.0):
                     dynamic_cores_unparked = False
-                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Restoring deep-efficiency battery caps.\n")
+                    run_watcher._bat_thermal_capped = False
+                    restore_mode = pre_boost_battery_mode
+                    sys.stdout.write(f"Auto Dynamic Boost: Load normalized ({cpu_usage:.1f}%). Restoring '{restore_mode}' caps.\n")
                     sys.stdout.flush()
                     try:
-                        set_cpu_freq_floor('battery', high_load=False)
-                        set_gpu('auto', 'battery')
-                        set_rapl_limits('battery')
+                        set_cpu_freq_floor(restore_mode, high_load=False)
+                        set_gpu('auto', restore_mode)
+                        set_rapl_limits(restore_mode)
                     except Exception as exc:
                         sys.stderr.write(f"Failed to return to battery profile: {exc}\n")
 
@@ -242,7 +258,7 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
 
             sleep_time = 2.5 if (not dynamic_cores_unparked and not is_media_playing) else 1.2
         else:
-            # On AC: All 16 cores always online. Engage extreme_performance for heavy games/compiles.
+            # On AC: All detected cores remain online. Engage extreme_performance for heavy games/compiles.
             dynamic_cores_unparked = True
             if heavy:
                 last_seen_time = now

@@ -317,6 +317,58 @@ class ConfigTests(unittest.TestCase):
             mock_turbo.assert_called_with(False)
             mock_aspm.assert_called_with('powersupersave')
 
+    @mock.patch('fpm.core.write_if_changed')
+    @mock.patch('fpm.core.glob.glob')
+    @mock.patch('fpm.core.read_text')
+    def test_optimize_sd_card_discovers_pci_class_0805(self, mock_read, mock_glob, mock_write):
+        mock_glob.return_value = ['/sys/bus/pci/devices/0000:02:00.0', '/sys/bus/pci/devices/0000:03:00.0']
+        mock_read.side_effect = lambda p: '0x080501' if '03:00.0' in str(p) else '0x028000'
+        core.optimize_sd_card()
+        mock_write.assert_called_once_with('/sys/bus/pci/devices/0000:03:00.0/power/control', 'auto')
+
+    @mock.patch('fpm.core.write_if_changed')
+    def test_set_hybrid_topology_universal_symmetric_and_clamps_freq(self, mock_write):
+        # Simulate an 8-core symmetric AMD/Intel CPU capped at 4.2 GHz
+        def fake_read(p):
+            s = str(p)
+            if s.endswith('cpuinfo_min_freq'):
+                return '400000'
+            if s.endswith('cpuinfo_max_freq'):
+                return '4200000'
+            return None
+
+        with mock.patch('fpm.core.detect_cpu_topology', return_value=(list(range(8)), [], [])), \
+             mock.patch('fpm.core.on_battery_from_sysfs', return_value=True), \
+             mock.patch('fpm.core.glob.glob', return_value=[]), \
+             mock.patch('fpm.core.os.path.exists', return_value=False), \
+             mock.patch('fpm.core.read_text', side_effect=fake_read):
+            core.set_hybrid_topology('extreme_performance')
+            max_writes = [c.args[1] for c in mock_write.call_args_list if str(c.args[0]).endswith('scaling_max_freq')]
+            self.assertEqual(len(max_writes), 8)
+            self.assertTrue(all(v == '4200000' for v in max_writes))
+
+    def test_cpu_topology_current_no_macbook_or_hardcoded_16(self):
+        with mock.patch('fpm.core.read_text', side_effect=['0-7', '4500000']), \
+             mock.patch('fpm.core.os.cpu_count', return_value=8), \
+             mock.patch('fpm.core.detect_cpu_topology', return_value=(list(range(8)), [], [])):
+            summary = core.cpu_topology_current()
+            self.assertIn('8/8 Online', summary)
+            self.assertNotIn('MacBook', summary)
+
+    def test_ffctl_doctor_and_status_json(self):
+        import json
+        import pathlib
+        import subprocess
+        ffctl_path = pathlib.Path(__file__).resolve().parents[1] / 'ffctl'
+        if not ffctl_path.exists():
+            self.skipTest('native ffctl binary not built yet')
+        st = json.loads(subprocess.check_output([str(ffctl_path), 'status', '--json'], text=True))
+        self.assertIn('power_source', st)
+        self.assertIn('cpu_online', st)
+        doc = json.loads(subprocess.check_output([str(ffctl_path), 'doctor', '--json'], text=True))
+        self.assertIn('pci_devices_total', doc)
+        self.assertIn('scaling_driver', doc)
+
 
 if __name__ == '__main__':
     unittest.main()

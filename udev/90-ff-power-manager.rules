@@ -8,4 +8,4 @@ ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x0c8000"
 ACTION=="add", SUBSYSTEM=="i2c", KERNEL=="i2c-SYNA*", ATTR{power/control}="on"
 
 # ST VL53L1 ToF Human Presence Sensor on Intel ISH (8087:0AC2)
-SUBSYSTEM=="hidraw", KERNELS=="*8087:0AC2*", MODE="0660", GROUP="wheel", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="*8087:0AC2*", MODE="0660", TAG+="uaccess"

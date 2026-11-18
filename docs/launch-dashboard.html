@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FF Power Manager v2.0 — One-Click Launch & Lenovo Outreach</title>
+  <title>FF Power Manager v2.1 — Community Launchpad</title>
   <style>
     :root { --bg:#0b0d12; --card:#141821; --border:rgba(255,255,255,0.1); --text:#f1f5f9; --muted:#94a3b8; --accent:#38bdf8; --green:#22c55e; }
     body { margin:0; font-family:Inter,system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); padding:32px; line-height:1.5; }
@@ -88,16 +88,16 @@ https://github.com/lwrlock/ff-power-manager</pre>
   document.getElementById("gmailLink").href =
     `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(mailTo)}&su=${encodeURIComponent(mailSubj)}&body=${encodeURIComponent(mailBody)}`;
 
-  const hnTitle = "Show HN: FF Power Manager v2.0 – MacBook ProMotion (60<->120Hz), OLED Guard & ToF Radar for Linux";
+  const hnTitle = "Show HN: FF Power Manager v2.1 – Adaptive Refresh (60<->120Hz), ffctl doctor & ToF Radar for Linux";
   document.getElementById("hnLink").href =
     `https://news.ycombinator.com/submitlink?u=${encodeURIComponent(repo)}&t=${encodeURIComponent(hnTitle)}`;
 
-  const rTitle = "[Open Source] FF Power Manager v2.0 – Battery-Only ProMotion (60<->120Hz at 0ms), OLED Care, s2idle Sleep Guard & Telemetry (.deb + Source)";
+  const rTitle = "[Open Source] FF Power Manager v2.1 – Hardware Residency Audit (ffctl doctor), Battery-Only Adaptive Refresh (60<->Max Hz) & s2idle Guard (.deb + Source)";
   document.getElementById("rLinuxLink").href = `https://www.reddit.com/r/linux/submit?url=${encodeURIComponent(repo)}&title=${encodeURIComponent(rTitle)}`;
   document.getElementById("rLenovoLink").href = `https://www.reddit.com/r/Lenovo/submit?url=${encodeURIComponent(repo)}&title=${encodeURIComponent(rTitle)}`;
   document.getElementById("rUbuntuLink").href = `https://www.reddit.com/r/Ubuntu/submit?url=${encodeURIComponent(repo)}&title=${encodeURIComponent(rTitle)}`;
 
-  const tweet = "I just open-sourced FF Power Manager v2.0 — MacBook-grade battery life, 0ms Battery-Only ProMotion (60<->120Hz), OLED burn-in care, ToF radar & s2idle sleep drain guard for Linux laptops (.deb + source): " + repo;
+  const tweet = "I just released FF Power Manager v2.1 — C/x86_64 ASM + GTK4 Linux power manager with ffctl doctor --json, 0ms Adaptive Refresh (60<->120Hz), OLED care & s2idle sleep drain guard (.deb + source): " + repo;
   document.getElementById("xLink").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweet)}`;
 </script>
 </body>

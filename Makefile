@@ -31,7 +31,7 @@ test_native: $(NATIVE_DIR)/test_native.c $(NATIVE_DIR)/sensor_asm.o
 compile:
 	/usr/bin/python3 -m py_compile src/fpm/*.py
 
-test: test-native test-python
+test: build test-native test-python
 
 test-native: test_native
 	./test_native
