@@ -9,6 +9,9 @@ import time
 from collections import deque
 from copy import deepcopy
 
+# Engage GTK4 OpenGL renderer unless overridden by the caller to cut CPU compositing load.
+os.environ.setdefault("GSK_RENDERER", "gl")
+
 import gi
 
 gi.require_version('Gtk', '4.0')
@@ -68,20 +71,20 @@ scrolledwindow, viewport, clamp {
     background: transparent;
 }
 .bento-card {
-    background: rgba(15, 10, 34, 0.86);
-    border: 1px solid rgba(167, 139, 250, 0.22);
+    background: rgba(15, 10, 34, 0.93);
+    border: 1px solid rgba(167, 139, 250, 0.24);
     border-radius: 18px;
     padding: 16px 18px;
 }
 .bento-card-accent {
-    background: rgba(24, 14, 52, 0.88);
-    border: 1px solid rgba(192, 132, 252, 0.34);
+    background: rgba(24, 14, 52, 0.94);
+    border: 1px solid rgba(192, 132, 252, 0.36);
     border-radius: 18px;
     padding: 16px 18px;
 }
 .hero-card {
-    background: rgba(16, 11, 36, 0.88);
-    border: 1px solid rgba(167, 139, 250, 0.25);
+    background: rgba(16, 11, 36, 0.94);
+    border: 1px solid rgba(167, 139, 250, 0.26);
     border-radius: 16px;
     padding: 14px 16px;
 }
@@ -133,12 +136,11 @@ scrolledwindow, viewport, clamp {
     border-bottom: 1px solid rgba(167, 139, 250, 0.10);
 }
 .floating-dock {
-    background: rgba(14, 9, 32, 0.92);
+    background: rgba(14, 9, 32, 0.95);
     border: 1px solid rgba(192, 132, 252, 0.38);
     border-radius: 9999px;
     padding: 6px 10px;
     margin-bottom: 12px;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
 }
 .dock-tab {
     border-radius: 9999px;

@@ -60,6 +60,7 @@ sudo chmod 755 /usr/local/lib/ff-power-manager/ff-power-helper
 cat <<'GUI_SH' | sudo tee /usr/local/bin/ff-power-manager >/dev/null
 #!/bin/sh
 export PYTHONPATH=/usr/local/lib/ff-power-manager
+export GSK_RENDERER="${GSK_RENDERER:-gl}"
 exec /usr/bin/python3 -m fpm.gui "$@"
 GUI_SH
 sudo chmod 755 /usr/local/bin/ff-power-manager

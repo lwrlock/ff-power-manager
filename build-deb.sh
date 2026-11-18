@@ -42,6 +42,7 @@ chmod 755 "$STAGE/usr/local/lib/ff-power-manager/ff-power-helper"
 cat > "$STAGE/usr/local/bin/ff-power-manager" <<'EOF'
 #!/bin/sh
 export PYTHONPATH=/usr/local/lib/ff-power-manager
+export GSK_RENDERER="${GSK_RENDERER:-gl}"
 exec /usr/bin/python3 -m fpm.gui "$@"
 EOF
 chmod 755 "$STAGE/usr/local/bin/ff-power-manager"
