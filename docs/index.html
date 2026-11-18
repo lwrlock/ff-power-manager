@@ -17,16 +17,16 @@
   <meta property="og:description" content="Open-source Linux power manager built in C, x86_64 Assembly, and Python/GTK4: universal Intel/AMD discovery, ffctl doctor residency audit, 0ms Adaptive Refresh, ToF radar, and s2idle wakeup guard.">
   <meta property="og:url" content="https://lwrlock.github.io/ff-power-manager/">
   <meta property="og:site_name" content="FF Power Manager">
-  <meta property="og:image" content="https://opengraph.githubassets.com/1/lwrlock/ff-power-manager">
+  <meta property="og:image" content="https://raw.githubusercontent.com/lwrlock/ff-power-manager/main/docs/screenshots/overview.png">
   <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
+  <meta property="og:image:height" content="880">
   <meta property="og:locale" content="en_US">
 
   <!-- Twitter / X Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="FF Power Manager — Universal Linux Power &amp; Residency Engine">
-  <meta name="twitter:description" content="Open-source Linux power manager for Ubuntu, Debian &amp; Fedora GNOME. Native C/ASM telemetry, ffctl doctor --json, Adaptive Refresh (60-Max Hz), ToF radar &amp; s2idle guard.">
-  <meta name="twitter:image" content="https://opengraph.githubassets.com/1/lwrlock/ff-power-manager">
+  <meta name="twitter:description" content="Open-source Linux power manager for Ubuntu, Debian &amp; Fedora GNOME. Native C/ASM telemetry, ffctl blame ~W/freeze, USB-C PD inspector, Adaptive Refresh (60-Max Hz), ToF wave gestures &amp; s2idle guard.">
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/lwrlock/ff-power-manager/main/docs/screenshots/overview.png">
   <meta name="twitter:site" content="@lwrlock">
 
   <!-- Schema.org JSON-LD -->
@@ -282,10 +282,40 @@
       <div class="terminal-box">
         <span class="comment"># Install via Debian/Ubuntu .deb package or build from source</span><br>
         $ sudo apt install ./ff-power-manager_2.2.0_amd64.deb<br>
-        <span class="comment"># Or source install (Ubuntu / Debian / Fedora):</span><br>
-        $ git clone https://github.com/lwrlock/ff-power-manager.git &amp;&amp; cd ff-power-manager &amp;&amp; sudo ./install.sh
+        <span class="comment"># Scan hardware, diagnose &amp; inspect top watt offenders in C:</span><br>
+        $ ffctl setup --apply &amp;&amp; ffctl blame
+      </div>
+
+      <div style="margin-top: 2.75rem;">
+        <img src="screenshots/showcase.gif" alt="FF Power Manager Cosmic Bento UI Showcase" style="width: 100%; max-width: 920px; border-radius: 16px; border: 1px solid rgba(168, 85, 247, 0.35); box-shadow: 0 20px 55px rgba(0, 0, 0, 0.65);">
       </div>
     </header>
+
+    <section>
+      <h2>Cosmic Bento Cockpit Gallery</h2>
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));">
+        <div class="card" style="padding: 1rem;">
+          <img src="screenshots/overview.png" alt="Cosmic Bento Telemetry Overview" style="width: 100%; border-radius: 10px; margin-bottom: 0.75rem;">
+          <h3>Telemetry Deck &amp; USB-C PD</h3>
+          <p>Live watt/thermal sparkline, <code>USB-PD</code> negotiation status, ToF distance gauge, and GPU-isolated corner space backdrop (~5% CPU).</p>
+        </div>
+        <div class="card" style="padding: 1rem;">
+          <img src="screenshots/blame.png" alt="Per-Process ~W & Freeze Profiler" style="width: 100%; border-radius: 10px; margin-bottom: 0.75rem;">
+          <h3>Per-Process ~W &amp; Safe Freeze</h3>
+          <p>Attributes exact <code>~Watts</code> &amp; battery minutes lost per process, tracks discrete <code>D0</code> GPU zombies, and pauses background hogs safely.</p>
+        </div>
+        <div class="card" style="padding: 1rem;">
+          <img src="screenshots/profiles.png" alt="Battery & AC Policy Studio" style="width: 100%; border-radius: 10px; margin-bottom: 0.75rem;">
+          <h3>Side-by-Side Policy Studio</h3>
+          <p>Instant Battery/AC EPP, PCIe ASPM, NVMe/USB PM, and <code>ff-power-autoboost</code> orchestration with single-click presets.</p>
+        </div>
+        <div class="card" style="padding: 1rem;">
+          <img src="screenshots/display.png" alt="Multi-DE Refresh & ToF Wave Gestures" style="width: 100%; border-radius: 10px; margin-bottom: 0.75rem;">
+          <h3>Adaptive Refresh &amp; ToF Wave Gestures</h3>
+          <p>Zero-latency <code>60&harr;120Hz</code> battery switching plus <code>&le;18cm</code> IR hand-wave actions for media pause, privacy dim, and session lock.</p>
+        </div>
+      </div>
+    </section>
 
     <section>
       <h2>Engineered Features</h2>
@@ -393,8 +423,23 @@
           </tr>
           <tr>
             <td><code>ffctl blame [--json]</code></td>
-            <td>Rank top wakeup/CPU offending processes &amp; active PCI/USB hardware blockers.</td>
+            <td>Rank top processes by CPU, wakeups/sec, <code>~Watts</code>, minutes lost &amp; active dGPU/PCI blockers.</td>
             <td>250 ms Live Profiler</td>
+          </tr>
+          <tr>
+            <td><code>ffctl setup [--apply]</code></td>
+            <td>Auto-discover CPU tiers, USB-C PD, dGPU, ToF &amp; recommend/apply optimal power policies.</td>
+            <td>Hardware Setup Wizard</td>
+          </tr>
+          <tr>
+            <td><code>ffctl bundle [path]</code></td>
+            <td>Export scrubbed <code>.tar.gz</code> diagnostics (masks usernames, hosts, MACs, IPs &amp; UUIDs).</td>
+            <td>Privacy-Safe Export</td>
+          </tr>
+          <tr>
+            <td><code>ffctl throttle PID</code></td>
+            <td>Safely freeze/resume/deprioritize background battery hogs (protects system/DE PIDs).</td>
+            <td>Safe Signal / IONice</td>
           </tr>
           <tr>
             <td><code>ffctl sleep-report [--json]</code></td>

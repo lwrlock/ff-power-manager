@@ -226,10 +226,10 @@ asm_atomic_write_file:
     movq    %rdx, %r14              /* content */
     movq    %rcx, %r15              /* len */
 
-    /* SYS_open(tmp_path, O_WRONLY|O_CREAT|O_TRUNC = 01101, 0644 = 0x1a4) */
+    /* SYS_open(tmp_path, O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW = 0401101, 0644 = 0x1a4) */
     movl    $2, %eax
     movq    %r12, %rdi
-    movl    $01101, %esi
+    movl    $0401101, %esi
     movl    $0644, %edx
     syscall
 

@@ -151,8 +151,11 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(f"Turbo set: {val}\n")
         return 0
     elif action == "set-epp":
-        from .core import set_epp
+        from .core import ALLOWED, set_epp
         val = args[1] if len(args) > 1 else 'balance_power'
+        if val not in ALLOWED['epp']:
+            sys.stderr.write(f"Invalid EPP value: {val}\n")
+            return 2
         set_epp(val)
         sys.stdout.write(f"EPP set: {val}\n")
         return 0
@@ -160,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
         from .core import set_lenovo_feature
         feat = args[1] if len(args) > 1 else "conservation_mode"
         val = args[2] if len(args) > 2 else "1"
+        if feat not in ("conservation_mode", "fn_lock", "usb_charging", "platform_profile"):
+            sys.stderr.write(f"Invalid hardware feature: {feat}\n")
+            return 2
         success = set_lenovo_feature(feat, val)
         sys.stdout.write(f"Lenovo {feat} set to {val}: {'success' if success else 'failed'}\n")
         return 0 if success else 1
@@ -173,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
             return subprocess.run(['/usr/bin/systemctl', 'restart', 'ff-power-autoboost.service']).returncode
         elif subaction == "stop":
             return subprocess.run(['/usr/bin/systemctl', 'stop', 'ff-power-autoboost.service']).returncode
-        return 0
+        sys.stderr.write(f"Invalid service action: {subaction}\n")
+        return 2
     elif action == "drop-caches":
         try:
             subprocess.run(['/usr/bin/sync'], check=False)
@@ -189,11 +196,6 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             sys.stderr.write(f"Failed to drop caches: {e}\n")
             return 1
-    elif action == "exec-script":
-        script_path = args[1] if len(args) > 1 else ""
-        if script_path and Path(script_path).exists():
-            return subprocess.run(["/bin/bash", script_path]).returncode
-        return 1
     else:
         sys.stderr.write(f"Unknown action: {action}\n")
         return 2

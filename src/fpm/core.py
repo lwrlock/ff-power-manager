@@ -6,6 +6,7 @@ import os
 import pathlib
 import signal
 import subprocess
+import tempfile
 import time
 from copy import deepcopy
 
@@ -173,9 +174,16 @@ def load_sensor_config() -> dict:
 
 def atomic_json_write(path: pathlib.Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(data, indent=2) + '\n')
-    tmp.replace(path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent))
+    tmp_path = pathlib.Path(tmp_name)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(data, indent=2) + '\n')
+        os.chmod(tmp_path, 0o644)
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _run_helper(args: list[str]) -> subprocess.CompletedProcess:

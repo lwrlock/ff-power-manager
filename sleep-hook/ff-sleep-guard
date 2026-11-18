@@ -26,6 +26,7 @@ read_energy_uwh() {
 case "$1" in
     pre)
         mkdir -p "$STATE_DIR"
+        chmod 0700 "$STATE_DIR"
         : > "$STATE_DIR/disabled_wakeups"
         for dev in XHCI TXHC TDM0 TRP0 TRP1 XHC0 XHC1; do
             if grep -qE "^${dev}[[:space:]].*\\*enabled" /proc/acpi/wakeup 2>/dev/null; then
@@ -62,9 +63,15 @@ EOF
         fi
 
         if [ -f "$STATE_DIR/sleep_pre" ]; then
-            PRE_TS=0; PRE_ENERGY=0; PRE_CAP=0; PRE_MODE="s2idle"
-            # shellcheck disable=SC1090
-            . "$STATE_DIR/sleep_pre" 2>/dev/null || true
+            PRE_TS="$(awk -F= '$1=="PRE_TS"{print $2; exit}' "$STATE_DIR/sleep_pre" | tr -cd '0-9')"
+            PRE_ENERGY="$(awk -F= '$1=="PRE_ENERGY"{print $2; exit}' "$STATE_DIR/sleep_pre" | tr -cd '0-9')"
+            PRE_CAP="$(awk -F= '$1=="PRE_CAP"{print $2; exit}' "$STATE_DIR/sleep_pre" | tr -cd '0-9')"
+            PRE_MODE_RAW="$(awk -F= '$1=="PRE_MODE"{print $2; exit}' "$STATE_DIR/sleep_pre")"
+            PRE_TS="${PRE_TS:-0}"; PRE_ENERGY="${PRE_ENERGY:-0}"; PRE_CAP="${PRE_CAP:-0}"
+            case "$PRE_MODE_RAW" in
+                deep|s2idle) PRE_MODE="$PRE_MODE_RAW" ;;
+                *) PRE_MODE="s2idle" ;;
+            esac
             rm -f "$STATE_DIR/sleep_pre"
 
             BAT="$(find_bat || true)"

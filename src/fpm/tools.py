@@ -32,10 +32,12 @@ from .core import (
 
 _MAC_RE = re.compile(r'\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b')
 _IP_RE = re.compile(r'\b(?!127\.0\.0\.1\b)(?:\d{1,3}\.){3}\d{1,3}\b')
+_UUID_RE = re.compile(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b')
+_BLOCKED_BUNDLE_PREFIXES = ('/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/sys', '/proc', '/dev', '/root')
 
 
 def sanitize_diagnostics_text(raw: str) -> str:
-    """Scrub usernames, hostnames, MACs, home paths, and non-loopback IPs from bundle text."""
+    """Scrub usernames, hostnames, MACs, UUIDs, home paths, and non-loopback IPs from bundle text."""
     if not raw:
         return ''
     out = raw
@@ -54,6 +56,7 @@ def sanitize_diagnostics_text(raw: str) -> str:
         pass
     out = _MAC_RE.sub('<MAC>', out)
     out = _IP_RE.sub('<IP>', out)
+    out = _UUID_RE.sub('<UUID>', out)
     return out
 
 
@@ -156,6 +159,11 @@ def create_diagnostics_bundle(output_path: str | pathlib.Path | None = None) -> 
         out_path = pathlib.Path.home() / f'ff-power-diagnostics-{ts}.tar.gz'
     else:
         out_path = pathlib.Path(output_path).expanduser()
+        if out_path.is_symlink():
+            raise ValueError(f'Refusing symlink output path: {out_path}')
+        resolved_str = str(out_path.resolve(strict=False))
+        if any(resolved_str == p or resolved_str.startswith(p + '/') for p in _BLOCKED_BUNDLE_PREFIXES):
+            raise ValueError(f'Refusing to write diagnostics bundle into system path: {resolved_str}')
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     setup_info = hardware_setup_scan(apply_recommended=False)
@@ -197,6 +205,7 @@ def create_diagnostics_bundle(output_path: str | pathlib.Path | None = None) -> 
             ti.size = len(raw)
             ti.mtime = int(time.time())
             tf.addfile(ti, io.BytesIO(raw))
+    os.chmod(out_path, 0o600)
 
     return {
         'path': str(out_path),

@@ -631,6 +631,8 @@ static int count_awake_dgpus(char *summary_out, size_t summary_sz) {
     return awake;
 }
 
+static void json_escape(const char *src, char *dst, size_t dst_sz);
+
 static void print_status(bool as_json) {
     init_battery_path();
     bool bat = is_on_battery();
@@ -691,6 +693,13 @@ static void print_status(bool as_json) {
     int dgpu_awake = count_awake_dgpus(dgpu_sum, sizeof(dgpu_sum));
 
     if (as_json) {
+        char pd_esc[192], drv_esc[96], epp_esc[96], aspm_esc[96], ref_esc[192], pres_esc[96];
+        json_escape(pd_label, pd_esc, sizeof(pd_esc));
+        json_escape(pstate_drv, drv_esc, sizeof(drv_esc));
+        json_escape(epp, epp_esc, sizeof(epp_esc));
+        json_escape(aspm, aspm_esc, sizeof(aspm_esc));
+        json_escape(refresh, ref_esc, sizeof(ref_esc));
+        json_escape(presence, pres_esc, sizeof(pres_esc));
         printf("{\n"
                "  \"power_source\": \"%s\",\n"
                "  \"charger_pd\": \"%s\",\n"
@@ -711,11 +720,11 @@ static void print_status(bool as_json) {
                "  \"presence_state\": \"%s\"\n"
                "}\n",
                bat ? "battery" : "ac",
-               pd_label, pd_watts, pd_slow ? "true" : "false", dgpu_awake,
+               pd_esc, pd_watts, pd_slow ? "true" : "false", dgpu_awake,
                (long)cap, watts, temp_c,
-               onln, conf, p_max_ghz, pstate_drv, epp,
+               onln, conf, p_max_ghz, drv_esc, epp_esc,
                (no_turbo == 0) ? "true" : (no_turbo == 1 ? "false" : "null"),
-               aspm, refresh, presence);
+               aspm_esc, ref_esc, pres_esc);
         return;
     }
 
@@ -1109,8 +1118,10 @@ static void print_blame(bool as_json) {
     char dgpu_sum[64] = "";
     int dgpu_awake = count_awake_dgpus(dgpu_sum, sizeof(dgpu_sum));
     if (as_json) {
+        char dgpu_esc[128];
+        json_escape(dgpu_sum, dgpu_esc, sizeof(dgpu_esc));
         printf("{\n  \"sample_ms\": 250,\n  \"sys_watts\": %.2f,\n  \"energy_now_wh\": %.2f,\n  \"dgpu_awake\": %d,\n  \"dgpu_info\": \"%s\",\n  \"processes\": [",
-               sys_watts, energy_now_wh, dgpu_awake, dgpu_sum);
+               sys_watts, energy_now_wh, dgpu_awake, dgpu_esc);
         for (size_t i = 0; i < top_n; i++) {
             char esc[96];
             json_escape(procs[i].comm, esc, sizeof(esc));
@@ -1281,17 +1292,25 @@ static void run_benchmark(void) {
 }
 
 static int run_python_tools(int argc, char *argv[]) {
+    unsetenv("PYTHONHOME");
+    unsetenv("PYTHONSTARTUP");
+    unsetenv("PYTHONINSPECT");
+    unsetenv("PYTHONUSERBASE");
     if (access("/usr/local/lib/ff-power-manager/fpm/tools.py", F_OK) == 0) {
         setenv("PYTHONPATH", "/usr/local/lib/ff-power-manager", 1);
-    } else if (access("src/fpm/tools.py", F_OK) == 0) {
+    } else if (geteuid() != 0 && access("src/fpm/tools.py", F_OK) == 0) {
         setenv("PYTHONPATH", "src", 1);
+    } else {
+        fprintf(stderr, "Error: Installed tools module not found under /usr/local/lib/ff-power-manager.\n");
+        return 1;
     }
     char *args[32];
     int idx = 0;
     args[idx++] = "/usr/bin/python3";
+    args[idx++] = "-s";
     args[idx++] = "-m";
     args[idx++] = "fpm.tools";
-    for (int i = 1; i < argc && idx < 30; i++) {
+    for (int i = 1; i < argc && idx < 31; i++) {
         args[idx++] = argv[i];
     }
     args[idx] = NULL;

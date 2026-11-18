@@ -214,9 +214,8 @@ done
 echo "[4/6] Polishing GDM login screen with user wallpaper..."
 WALLPAPER="$REAL_HOME/.config/background"
 if [ -f "$WALLPAPER" ]; then
-    GDM_WORK="/tmp/gdm-theme-build"
-    rm -rf "$GDM_WORK"
-    mkdir -p "$GDM_WORK"
+    GDM_WORK="$(mktemp -d /tmp/ffpm-gdm.XXXXXX)"
+    trap 'rm -rf "$GDM_WORK"' EXIT
     cd "$GDM_WORK"
 
     # Extract original theme

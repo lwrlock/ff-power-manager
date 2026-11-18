@@ -2,7 +2,8 @@ polkit.addRule(function(action, subject) {
     if ((action.id == "org.freedesktop.policykit.exec" &&
          action.lookup("program") == "/usr/local/lib/ff-power-manager/ff-power-helper") ||
         action.id == "com.ff.powermanager.save-and-apply") {
-        if (subject.isInGroup("wheel") || subject.isInGroup("sudo") || subject.local) {
+        if ((subject.isInGroup("wheel") || subject.isInGroup("sudo")) &&
+            subject.active && subject.local) {
             return polkit.Result.YES;
         }
     }

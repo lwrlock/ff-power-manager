@@ -548,6 +548,25 @@ class ConfigTests(unittest.TestCase):
                 self.assertTrue(res['ok'])
                 kill_m.assert_called_once()
 
+    def test_security_hardening_helper_and_bundle(self):
+        from fpm import helper, tools
+        self.assertEqual(helper.main(['exec-script', '/tmp/evil.sh']), 2)
+        self.assertEqual(helper.main(['set-epp', 'powersave;rm -rf /']), 2)
+        self.assertEqual(helper.main(['set-lenovo', '../passwd', '1']), 2)
+        self.assertEqual(helper.main(['autoboost-service', 'arbitrary-cmd']), 2)
+
+        scrub = tools.sanitize_diagnostics_text('uuid 123e4567-e89b-12d3-a456-426614174000 end')
+        self.assertIn('<UUID>', scrub)
+        self.assertNotIn('123e4567', scrub)
+
+        with self.assertRaises(ValueError):
+            tools.create_diagnostics_bundle('/etc/ff-evil.tar.gz')
+        with tempfile.TemporaryDirectory() as tmp:
+            sym = pathlib.Path(tmp) / 'link.tar.gz'
+            sym.symlink_to(pathlib.Path(tmp) / 'target.tar.gz')
+            with self.assertRaises(ValueError):
+                tools.create_diagnostics_bundle(sym)
+
 
 if __name__ == '__main__':
     unittest.main()

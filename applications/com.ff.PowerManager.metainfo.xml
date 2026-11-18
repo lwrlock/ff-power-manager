@@ -2,12 +2,29 @@
 <component type="desktop-application">
   <id>com.ff.PowerManager</id>
   <name>FF Power Manager</name>
-  <summary>Event-driven laptop power and Lenovo ToF presence manager</summary>
+  <summary>Universal C/ASM Linux Power, Multi-DE Adaptive Refresh &amp; Cosmic Bento Cockpit</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
+  <url type="homepage">https://lwrlock.github.io/ff-power-manager/</url>
+  <url type="vcs-browser">https://github.com/lwrlock/ff-power-manager</url>
+  <url type="bugtracker">https://github.com/lwrlock/ff-power-manager/issues</url>
   <description>
-    <p>GNOME/Fedora power-profile helper for Lenovo IdeaPad Pro 5 14IAH10 with optional Intel ISH / ST VL53L1 HOD presence-controlled OLED blanking.</p>
+    <p>Hybrid C/x86_64 Assembly and GTK4 power suite featuring universal Intel &amp; AMD discovery, per-process wattage and battery-drain attribution with safe background freeze, dGPU zombie detection, USB-C PD inspection, Multi-DE 60-Max Hz Adaptive Refresh, and optional ST VL53L1 ToF presence and wave gestures.</p>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Cosmic Bento Telemetry Overview</caption>
+      <image>https://raw.githubusercontent.com/lwrlock/ff-power-manager/main/docs/screenshots/overview.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Per-Process Power &amp; Drain Blame Profiler with Safe Freeze</caption>
+      <image>https://raw.githubusercontent.com/lwrlock/ff-power-manager/main/docs/screenshots/blame.png</image>
+    </screenshot>
+  </screenshots>
   <launchable type="desktop-id">com.ff.PowerManager.desktop</launchable>
-  <provides><binary>ff-power-manager</binary></provides>
+  <provides>
+    <binary>ff-power-manager</binary>
+    <binary>ffctl</binary>
+    <binary>ff-tui</binary>
+  </provides>
 </component>

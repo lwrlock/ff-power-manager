@@ -88,7 +88,18 @@ static void test_asm_atomic_write(void) {
     buf[n] = '\0';
     assert(strcmp(buf, data) == 0);
     unlink(final);
-    printf("[PASS] asm_atomic_write_file passed!\n");
+
+    /* Symlink protection (O_NOFOLLOW): must not overwrite target through tmp symlink */
+    const char *sym_tmp = "/tmp/test_asm_sym_tmp";
+    const char *sym_tgt = "/tmp/test_asm_sym_target";
+    unlink(sym_tmp);
+    unlink(sym_tgt);
+    assert(symlink(sym_tgt, sym_tmp) == 0);
+    asm_atomic_write_file(sym_tmp, final, "EVIL", 4);
+    assert(access(sym_tgt, F_OK) != 0);
+    unlink(sym_tmp);
+    unlink(final);
+    printf("[PASS] asm_atomic_write_file passed (including O_NOFOLLOW symlink guard)!\n");
 }
 
 static void test_asm_fast_read_sysfs(void) {
