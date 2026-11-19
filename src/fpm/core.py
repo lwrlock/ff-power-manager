@@ -366,6 +366,10 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
         # Let set_gpu manage graphics controllers (class 0x03xxxx)
         if cls.startswith('0x03'):
             continue
+        # Keep Intel Serial Bus / LPSS I2C controllers (0x0c8000) active to prevent touchpad wake stutter & touch jumps
+        if cls == '0x0c8000':
+            write_if_changed(ctrl, 'on')
+            continue
         # Thunderbolt / USB4 NHI (0x0c0340) can safely enter D3cold when idle
         if cls == '0x0c0340':
             write_if_changed(ctrl, 'auto')
@@ -376,6 +380,9 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
             write_if_changed(ctrl, 'on' if has_usb_child else 'auto')
             continue
         write_if_changed(ctrl, 'auto')
+    for i2c_ctrl in glob.glob('/sys/bus/platform/devices/i2c_designware.*/power/control') + \
+                    glob.glob('/sys/bus/i2c/devices/i2c-SYNA*/power/control'):
+        write_if_changed(i2c_ctrl, 'on')
 
 
 
@@ -587,14 +594,13 @@ def set_gpu(value: str = 'system', mode: str | None = None) -> None:
         if os.path.exists(max_node):
             rp0_node = os.path.join(gt_freq, 'rp0_freq')
             rp0 = read_text(rp0_node)
-            if is_extreme:
+            if is_extreme or not on_bat:
                 target_max = rp0.strip() if rp0 and rp0.strip().isdigit() else ('1300' if is_gt1 else '2350')
             elif is_max_bat:
-                target_max = '800' if is_gt1 else '800'
+                target_max = '800'
             else:
-                # Balanced mode: 3D GPU (gt0) dynamic burst up to 1600 MHz (battery) / 1800 MHz (AC)
-                # for liquid-smooth 120Hz ProMotion without frame drops, while resting at RPN/RC6 in idle.
-                target_max = '1200' if is_gt1 else ('1600' if on_bat else '1800')
+                # Balanced battery: 3D GPU (gt0) burst up to 1600 MHz, Media (gt1) up to 1200 MHz
+                target_max = '1200' if is_gt1 else '1600'
             write_if_changed(max_node, target_max)
 
     # Intel Arc & Iris Xe GPU power optimization (GuC SLPC & RC6 legacy i915 nodes)
@@ -755,6 +761,8 @@ def optimize_desktop_responsiveness() -> None:
     """Apply interactive CPU scheduling priorities and P-core affinity to compositor/audio/UI processes."""
     p_cores, _, _ = detect_cpu_topology()
     p_set = set(p_cores) if p_cores else None
+    pin_threads = {'gnome-shell', 'mutter', 'xwayland'}
+    rt_threads = pin_threads | {'pipewire', 'pipewire-pulse', 'wireplumber'}
     for comm_path in glob.glob('/proc/[0-9]*/comm'):
         try:
             with open(comm_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -771,7 +779,27 @@ def optimize_desktop_responsiveness() -> None:
                 cur_nice = os.getpriority(os.PRIO_PROCESS, pid)
                 if cur_nice != target_nice:
                     os.setpriority(os.PRIO_PROCESS, pid, target_nice)
-                if p_set and name in ('gnome-shell', 'mutter', 'xwayland'):
+                if name in rt_threads:
+                    try:
+                        tids = os.listdir(f'/proc/{pid}/task')
+                    except OSError:
+                        tids = []
+                    for tid_s in tids:
+                        if not tid_s.isdigit():
+                            continue
+                        tid = int(tid_s)
+                        if tid != pid:
+                            try:
+                                if os.getpriority(os.PRIO_PROCESS, tid) != target_nice:
+                                    os.setpriority(os.PRIO_PROCESS, tid, target_nice)
+                            except OSError:
+                                pass
+                        if p_set and name in pin_threads:
+                            try:
+                                os.sched_setaffinity(tid, p_set)
+                            except OSError:
+                                pass
+                if p_set and name in pin_threads:
                     try:
                         os.sched_setaffinity(pid, p_set)
                     except OSError:
@@ -781,7 +809,7 @@ def optimize_desktop_responsiveness() -> None:
 
 
 def pin_interactive_irqs() -> None:
-    """Pin USB HID (xhci_hcd) and GPU IRQs (xe/i915/amdgpu) to detected performance cores."""
+    """Pin HID (touchpad, keyboard, USB) and GPU IRQs (xe/i915/amdgpu) to detected performance cores."""
     p_cores, _, _ = detect_cpu_topology()
     if not p_cores:
         return
@@ -797,7 +825,7 @@ def pin_interactive_irqs() -> None:
         return
     for line in lines:
         stripped = line.rstrip()
-        if 'xhci_hcd' in line or stripped.endswith((' xe', ' i915', ' amdgpu')):
+        if any(k in line for k in ('xhci_hcd', 'i2c_designware', 'SYNA', 'ELAN', 'i8042')) or stripped.endswith((' xe', ' i915', ' amdgpu')):
             irq_str = line.split(':', 1)[0].strip()
             if irq_str.isdigit():
                 write_if_changed(f'/proc/irq/{irq_str}/smp_affinity_list', aff_spec)

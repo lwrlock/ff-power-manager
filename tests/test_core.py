@@ -567,6 +567,57 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tools.create_diagnostics_bundle(sym)
 
+    @mock.patch('fpm.core.write_if_changed')
+    @mock.patch('fpm.core.read_text')
+    @mock.patch('fpm.core.glob.glob')
+    def test_pci_runtime_pm_keeps_i2c_touchpad_controller_on(self, mock_glob, mock_read, mock_write):
+        def fake_glob(pattern):
+            if pattern == '/sys/bus/pci/devices/*/power/control':
+                return ['/sys/bus/pci/devices/0000:00:15.0/power/control']
+            if pattern == '/sys/bus/platform/devices/i2c_designware.*/power/control':
+                return ['/sys/bus/platform/devices/i2c_designware.0/power/control']
+            return []
+
+        mock_glob.side_effect = fake_glob
+        mock_read.return_value = '0x0c8000'
+        core.set_pci_runtime_pm('auto')
+        calls = {c.args[0]: c.args[1] for c in mock_write.call_args_list}
+        self.assertEqual(calls['/sys/bus/pci/devices/0000:00:15.0/power/control'], 'on')
+        self.assertEqual(calls['/sys/bus/platform/devices/i2c_designware.0/power/control'], 'on')
+
+    @mock.patch('fpm.core.write_if_changed')
+    @mock.patch('fpm.core.read_text')
+    @mock.patch('fpm.core.os.path.exists', return_value=True)
+    @mock.patch('fpm.core.glob.glob')
+    def test_set_gpu_unlocks_rp0_on_ac(self, mock_glob, _mock_exists, mock_read, mock_write):
+        mock_glob.side_effect = [
+            [],
+            ['/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0'],
+            [],
+        ]
+        mock_read.side_effect = lambda p: '800' if str(p).endswith('rpn_freq') else '2350'
+        core.set_gpu('on', 'ac')
+        calls = {c.args[0]: c.args[1] for c in mock_write.call_args_list}
+        base = '/sys/devices/pci0000:00/0000:00:02.0/tile0/gt0/freq0'
+        self.assertEqual(calls[f'{base}/power_profile'], 'base')
+        self.assertEqual(calls[f'{base}/max_freq'], '2350')
+
+    @mock.patch('fpm.core.write_if_changed')
+    @mock.patch('fpm.core.detect_cpu_topology', return_value=([0, 1, 2, 3, 4, 5], [6, 7], []))
+    def test_pin_interactive_irqs_includes_touchpad_and_keyboard(self, _mock_topo, mock_write):
+        fake_irq = (
+            "   1:        656   IR-IO-APIC   1-edge      i8042\n"
+            "  32:       1000   IR-IO-APIC  32-fasteoi   idma64.0, i2c_designware.0\n"
+            " 144:       5000   IR-PCI-MSI   0-edge      xe\n"
+            " 187:        200   IR-PCI-MSI   0-edge      xhci_hcd\n"
+            " 196:        300   intel-gpio  182          SYNA2BA6:00\n"
+        )
+        with mock.patch('builtins.open', mock.mock_open(read_data=fake_irq)):
+            core.pin_interactive_irqs()
+        calls = {c.args[0]: c.args[1] for c in mock_write.call_args_list}
+        for irq in ('1', '32', '144', '187', '196'):
+            self.assertEqual(calls[f'/proc/irq/{irq}/smp_affinity_list'], '0-5')
+
 
 if __name__ == '__main__':
     unittest.main()
