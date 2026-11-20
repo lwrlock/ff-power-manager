@@ -381,7 +381,9 @@ def set_pci_runtime_pm(value: str = 'auto') -> None:
             continue
         write_if_changed(ctrl, 'auto')
     for i2c_ctrl in glob.glob('/sys/bus/platform/devices/i2c_designware.*/power/control') + \
-                    glob.glob('/sys/bus/i2c/devices/i2c-SYNA*/power/control'):
+                    glob.glob('/sys/bus/i2c/devices/i2c-SYNA*/power/control') + \
+                    glob.glob('/sys/bus/platform/devices/idma64.*/power/control') + \
+                    glob.glob('/sys/bus/hid/devices/*06CB:CF00*/power/control'):
         write_if_changed(i2c_ctrl, 'on')
 
 
@@ -825,7 +827,7 @@ def pin_interactive_irqs() -> None:
         return
     for line in lines:
         stripped = line.rstrip()
-        if any(k in line for k in ('xhci_hcd', 'i2c_designware', 'SYNA', 'ELAN', 'i8042')) or stripped.endswith((' xe', ' i915', ' amdgpu')):
+        if any(k in line for k in ('xhci_hcd', 'i2c_designware', 'SYNA', 'ELAN', 'i8042', 'INTC', 'idma64')) or stripped.endswith((' xe', ' i915', ' amdgpu')):
             irq_str = line.split(':', 1)[0].strip()
             if irq_str.isdigit():
                 write_if_changed(f'/proc/irq/{irq_str}/smp_affinity_list', aff_spec)
