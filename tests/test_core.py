@@ -377,6 +377,9 @@ class ConfigTests(unittest.TestCase):
         self.assertIn('active_usb', blm)
         slp = json.loads(subprocess.check_output([str(ffctl_path), 'sleep-report', '--json'], text=True))
         self.assertIsInstance(slp, dict)
+        cs = json.loads(subprocess.check_output([str(ffctl_path), 'cstate', '--json'], text=True))
+        self.assertIn('active_c0_pct', cs)
+        self.assertIn('states', cs)
 
     def test_auto_boost_telemetry_ring_buffer_and_focus_throttle(self):
         from collections import deque

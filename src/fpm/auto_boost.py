@@ -3,14 +3,17 @@ from __future__ import annotations
 import glob
 import json
 import os
+import select
 import signal
 import sys
+import threading
 import time
 from collections import deque
 
 from .core import (
     apply,
     battery_percent,
+    detect_cpu_topology,
     load_config,
     on_battery_from_sysfs,
     optimize_desktop_responsiveness,
@@ -91,11 +94,134 @@ KNOWN_GAMES = {
 }
 
 _running = True
+_UNFOCUSED_TIMERS: dict[int, float] = {}
+_FROZEN_PIDS: set[int] = set()
+
+# Freeze threshold: 5 minutes (300 seconds) unfocused on battery with no media playback
+FREEZE_UNFOCUSED_SECONDS = 300.0
+FREEZE_SAFE_CANDIDATES = {
+    'chrome', 'chromium', 'brave', 'isolated web co', 'web content', 'discord', 'slack', 'teams',
+}
 
 
 def _sig_handler(signum, frame):
     global _running
     _running = False
+    for p in list(_FROZEN_PIDS):
+        try:
+            os.kill(p, signal.SIGCONT)
+        except OSError:
+            pass
+
+
+class InputBurstListener(threading.Thread):
+    """Listens for hardware touchpad/keyboard events and applies instantaneous micro-bursts."""
+    def __init__(self, p_cores: list[int] | None = None):
+        super().__init__(daemon=True, name="InputBurstListener")
+        self.p_cores = p_cores or [0, 1, 2, 3, 4, 5]
+        self._running = True
+        self._last_burst = 0.0
+        self._burst_active = False
+        self._burst_until = 0.0
+
+    def stop(self):
+        self._running = False
+
+    def run(self):
+        dev_paths = []
+        for p in sorted(glob.glob('/dev/input/event*')):
+            try:
+                fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+                dev_paths.append((p, fd))
+            except (PermissionError, FileNotFoundError, OSError):
+                continue
+
+        if not dev_paths:
+            return
+
+        try:
+            epoll = select.epoll()
+        except Exception:
+            for _, fd in dev_paths:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            return
+
+        fd_map = {}
+        for p, fd in dev_paths:
+            try:
+                epoll.register(fd, select.EPOLLIN)
+                fd_map[fd] = p
+            except OSError:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+        try:
+            while self._running:
+                now = time.monotonic()
+                if self._burst_active and now >= self._burst_until:
+                    self._burst_active = False
+                    self._restore_epp()
+
+                try:
+                    events = epoll.poll(0.04)
+                except (InterruptedError, OSError):
+                    continue
+
+                if not events:
+                    continue
+
+                for fd, _ in events:
+                    try:
+                        os.read(fd, 256)
+                    except OSError:
+                        pass
+
+                if on_battery_from_sysfs():
+                    now = time.monotonic()
+                    if now - self._last_burst >= 0.12:
+                        self._last_burst = now
+                        self._burst_active = True
+                        self._burst_until = now + 0.080
+                        self._trigger_burst()
+        finally:
+            if self._burst_active:
+                self._restore_epp()
+            for fd in fd_map:
+                try:
+                    epoll.unregister(fd)
+                except Exception:
+                    pass
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                epoll.close()
+            except Exception:
+                pass
+
+    def _trigger_burst(self):
+        for c in self.p_cores:
+            p = f'/sys/devices/system/cpu/cpu{c}/cpufreq/energy_performance_preference'
+            try:
+                with open(p, 'w') as f:
+                    f.write('balance_performance')
+            except OSError:
+                pass
+
+    def _restore_epp(self):
+        for c in self.p_cores:
+            p = f'/sys/devices/system/cpu/cpu{c}/cpufreq/energy_performance_preference'
+            try:
+                with open(p, 'w') as f:
+                    f.write('balance_power')
+            except OSError:
+                pass
 
 
 def find_heavy_process(cpu_usage: float = 0.0) -> str | None:
@@ -142,11 +268,33 @@ def get_cpu_load(prev_idle: float, prev_total: float) -> tuple[float, float, flo
 
 
 
+_CACHED_TOPOLOGY = None
+
+
+def _get_cpu_topology_sets():
+    global _CACHED_TOPOLOGY
+    if _CACHED_TOPOLOGY is None:
+        try:
+            p, e, lpe = detect_cpu_topology()
+            all_cores = set(p + e + lpe) if (p or e or lpe) else None
+            e_island = set(e + lpe) if (e or lpe) else all_cores
+            lpe_island = set(lpe) if lpe else (e_island or all_cores)
+            _CACHED_TOPOLOGY = (all_cores, e_island, lpe_island)
+        except Exception:
+            _CACHED_TOPOLOGY = (None, None, None)
+    return _CACHED_TOPOLOGY
+
+
 def _apply_focus_battery_throttle(on_bat: bool, is_media_playing: bool) -> None:
-    """Lower scheduler weight of unfocused heavy apps on battery; restore on focus or AC."""
+    """Lower scheduler weight and migrate unfocused/indexer processes to E/LPE cores on battery."""
     throttle_targets = {
         'chrome', 'chromium', 'brave', 'firefox', 'discord', 'slack', 'teams', 'spotify',
     }
+    background_heavy_services = {
+        'tracker-miner-f', 'tracker-miner-fs-3', 'tracker-extract', 'tracker-extract-3',
+        'updatedb', 'updatedb.mlocat', 'plocate', 'packagekitd',
+    }
+    all_cores, e_island, lpe_island = _get_cpu_topology_sets()
     focused_pid = 0
     focused_name = ''
     try:
@@ -163,14 +311,65 @@ def _apply_focus_battery_throttle(on_bat: bool, is_media_playing: bool) -> None:
             pid = int(comm_path.split('/')[2])
             with open(comm_path, 'r', encoding='utf-8', errors='ignore') as f:
                 cname = f.read().strip().lower()
+
+            if cname in background_heavy_services:
+                want_nice = 19 if on_bat else 0
+                if os.getpriority(os.PRIO_PROCESS, pid) != want_nice:
+                    os.setpriority(os.PRIO_PROCESS, pid, want_nice)
+                if hasattr(os, 'sched_setaffinity') and lpe_island and all_cores:
+                    target_aff = lpe_island if on_bat else all_cores
+                    try:
+                        os.sched_setaffinity(pid, target_aff)
+                    except (PermissionError, ProcessLookupError, OSError):
+                        pass
+                continue
+
             if cname not in throttle_targets:
                 continue
+
             is_focused = (pid == focused_pid) or (focused_name and cname in focused_name)
             want_nice = 10 if (on_bat and not is_media_playing and not is_focused and focused_pid > 0) else 0
             if os.getpriority(os.PRIO_PROCESS, pid) != want_nice:
                 os.setpriority(os.PRIO_PROCESS, pid, want_nice)
+
+            if hasattr(os, 'sched_setaffinity') and e_island and all_cores:
+                target_aff = e_island if (want_nice > 0 and e_island) else all_cores
+                try:
+                    os.sched_setaffinity(pid, target_aff)
+                except (PermissionError, ProcessLookupError, OSError):
+                    pass
+
+            # Stale background tab/app freezing on battery (SIGSTOP / SIGCONT)
+            now_mono = time.monotonic()
+            if on_bat and not is_media_playing and not is_focused and focused_pid > 0:
+                if pid not in _UNFOCUSED_TIMERS:
+                    _UNFOCUSED_TIMERS[pid] = now_mono
+                elif (now_mono - _UNFOCUSED_TIMERS[pid] >= FREEZE_UNFOCUSED_SECONDS) and (cname in FREEZE_SAFE_CANDIDATES):
+                    if pid not in _FROZEN_PIDS:
+                        try:
+                            os.kill(pid, signal.SIGSTOP)
+                            _FROZEN_PIDS.add(pid)
+                        except (PermissionError, ProcessLookupError, OSError):
+                            pass
+            else:
+                _UNFOCUSED_TIMERS.pop(pid, None)
+                if pid in _FROZEN_PIDS:
+                    try:
+                        os.kill(pid, signal.SIGCONT)
+                    except (PermissionError, ProcessLookupError, OSError):
+                        pass
+                    _FROZEN_PIDS.discard(pid)
         except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
             continue
+
+    if not on_bat and _FROZEN_PIDS:
+        for p in list(_FROZEN_PIDS):
+            try:
+                os.kill(p, signal.SIGCONT)
+            except (PermissionError, ProcessLookupError, OSError):
+                pass
+        _FROZEN_PIDS.clear()
+        _UNFOCUSED_TIMERS.clear()
 
 
 def _record_telemetry_sample(history: deque, on_bat: bool) -> None:
@@ -233,6 +432,14 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine started.\n")
     sys.stdout.flush()
+
+    input_listener = None
+    try:
+        p_cores, _, _ = detect_cpu_topology()
+        input_listener = InputBurstListener(p_cores)
+        input_listener.start()
+    except Exception:
+        pass
 
     while _running:
         on_bat = on_battery_from_sysfs()
@@ -387,6 +594,12 @@ def run_watcher(poll_interval: float = 2.0, grace_period: float = 5.0) -> None:
             _apply_focus_battery_throttle(on_bat, is_media_playing)
 
         time.sleep(sleep_time)
+
+    if input_listener:
+        try:
+            input_listener.stop()
+        except Exception:
+            pass
 
     sys.stdout.write("FF Power Manager: Auto Dynamic Boost engine stopped.\n")
 
