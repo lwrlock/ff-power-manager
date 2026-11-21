@@ -292,6 +292,52 @@ class PresenceController:
                 GLib.Variant('(b)', (dim,)),
                 None, Gio.DBusCallFlags.NONE, 1000, None,
             )
+            return
+        except Exception:
+            pass
+
+        try:
+            if dim:
+                res = self.session.call_sync(
+                    'org.gnome.SettingsDaemon.Power',
+                    '/org/gnome/SettingsDaemon/Power',
+                    'org.freedesktop.DBus.Properties',
+                    'Get',
+                    GLib.Variant('(ss)', ('org.gnome.SettingsDaemon.Power.Screen', 'Brightness')),
+                    GLib.VariantType('(v)'), Gio.DBusCallFlags.NONE, 1000, None,
+                )
+                cur = int(res.unpack()[0])
+                if cur > 5:
+                    if self.saved_brightness is None:
+                        self.saved_brightness = cur
+                    target = max(2, cur // 4)
+                    self.session.call_sync(
+                        'org.gnome.SettingsDaemon.Power',
+                        '/org/gnome/SettingsDaemon/Power',
+                        'org.freedesktop.DBus.Properties',
+                        'Set',
+                        GLib.Variant('(ssv)', (
+                            'org.gnome.SettingsDaemon.Power.Screen',
+                            'Brightness',
+                            GLib.Variant('i', target),
+                        )),
+                        None, Gio.DBusCallFlags.NONE, 1000, None,
+                    )
+            elif self.saved_brightness is not None:
+                restore = int(self.saved_brightness)
+                self.saved_brightness = None
+                self.session.call_sync(
+                    'org.gnome.SettingsDaemon.Power',
+                    '/org/gnome/SettingsDaemon/Power',
+                    'org.freedesktop.DBus.Properties',
+                    'Set',
+                    GLib.Variant('(ssv)', (
+                        'org.gnome.SettingsDaemon.Power.Screen',
+                        'Brightness',
+                        GLib.Variant('i', restore),
+                    )),
+                    None, Gio.DBusCallFlags.NONE, 1000, None,
+                )
         except Exception:
             pass
 
