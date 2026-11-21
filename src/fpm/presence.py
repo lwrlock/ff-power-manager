@@ -23,7 +23,6 @@ DEFAULT = {
     'away_delay': 20,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': False,
@@ -66,7 +65,6 @@ def load_config() -> dict:
         out['away_delay'] = 20
     out['promotion_120hz'] = bool(out.get('promotion_120hz', True))
     out['force_120hz_on_battery'] = bool(out.get('force_120hz_on_battery', True))
-    out['screen_off_on_away'] = bool(out.get('screen_off_on_away', True))
     out['oled_screen_care'] = bool(out.get('oled_screen_care', False))
     out['inhibit_on_media'] = bool(out.get('inhibit_on_media', True))
     try:
@@ -809,13 +807,6 @@ class PresenceController:
 
         if self.cfg.get('lock_on_away'):
             self._lock()
-        if self.cfg.get('screen_off_on_away'):
-            try:
-                self._set_display(False)
-                self.screen_off_by_fpm = True
-                self._set_wireless_sleep(True)
-            except Exception:
-                pass
         return GLib.SOURCE_REMOVE
 
     def _handle(self, state: str) -> None:

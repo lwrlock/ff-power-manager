@@ -51,7 +51,6 @@ DEFAULT_PRESENCE = {
     'away_delay': 45,
     'wake_on_approach': True,
     'wake_only_if_fpm_off': False,
-    'screen_off_on_away': True,
     'lock_on_away': False,
     'auto_refresh_rate': True,
     'promotion_120hz': True,
@@ -933,7 +932,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.presence_switches = {}
         for key, title, defval in [
             ('wake_on_approach', 'Instant Wake on Approach', True),
-            ('screen_off_on_away', 'Turn Screen Off on Departure', True),
             ('inhibit_on_media', 'Inhibit During Media / Video Playback', True),
             ('lock_on_away', 'Lock Session on Departure', False),
         ]:
