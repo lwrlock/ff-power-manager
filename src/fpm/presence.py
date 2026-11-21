@@ -13,6 +13,16 @@ import gi
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio, GLib
 
+try:
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('Gdk', '4.0')
+    from gi.repository import Gdk, Gtk
+    _GTK_OK = True
+except Exception:
+    Gdk = None
+    Gtk = None
+    _GTK_OK = False
+
 from .core import RUN_DIR, STATE_FILE, on_battery_from_sysfs
 
 CONF = pathlib.Path.home() / '.config/ff-power-manager/presence.json'
@@ -76,6 +86,107 @@ def load_config() -> dict:
     return out
 
 
+class _BlackoutOverlay:
+    """Fullscreen #000000 OLED blackout curtain with hidden cursor and instant wake."""
+
+    def __init__(self, on_wake):
+        self._on_wake = on_wake
+        self._win = None
+        self._fade_id = 0
+        self._opacity = 0.0
+        self._css_loaded = False
+
+    def _ensure_window(self) -> bool:
+        if not _GTK_OK:
+            return False
+        if self._win is not None:
+            return True
+        try:
+            Gtk.init()
+            if not self._css_loaded:
+                css = Gtk.CssProvider()
+                css.load_from_data(b'window.fpm-blackout { background-color: #000000; }')
+                display = Gdk.Display.get_default()
+                if display is None:
+                    return False
+                Gtk.StyleContext.add_provider_for_display(
+                    display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                self._css_loaded = True
+            win = Gtk.Window()
+            win.set_decorated(False)
+            win.set_title('fpm-oled-blackout')
+            win.add_css_class('fpm-blackout')
+            win.set_cursor_from_name('none')
+
+            def _wake(*_args):
+                if self._on_wake:
+                    self._on_wake()
+                return False
+
+            motion = Gtk.EventControllerMotion()
+            motion.connect('motion', _wake)
+            win.add_controller(motion)
+
+            key = Gtk.EventControllerKey()
+            key.connect('key-pressed', _wake)
+            win.add_controller(key)
+
+            click = Gtk.GestureClick()
+            click.connect('pressed', _wake)
+            win.add_controller(click)
+
+            self._win = win
+            return True
+        except Exception:
+            return False
+
+    def show_fade(self) -> None:
+        if not self._ensure_window():
+            return
+        self._cancel_fade()
+        self._opacity = 0.0
+        self._win.set_opacity(0.0)
+        self._win.fullscreen()
+        self._win.present()
+        self._win.set_cursor_from_name('none')
+        self._fade_id = GLib.timeout_add(45, self._step_fade)
+
+    def _step_fade(self) -> bool:
+        if self._win is None or not self._win.get_visible():
+            self._fade_id = 0
+            return GLib.SOURCE_REMOVE
+        self._opacity = min(1.0, self._opacity + 0.06)
+        self._win.set_opacity(self._opacity)
+        if self._opacity >= 1.0:
+            self._fade_id = 0
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
+
+    def _cancel_fade(self) -> None:
+        if self._fade_id:
+            GLib.source_remove(self._fade_id)
+            self._fade_id = 0
+
+    def hide_now(self) -> None:
+        self._cancel_fade()
+        if self._win is not None:
+            try:
+                self._win.set_opacity(0.0)
+                self._win.hide()
+            except Exception:
+                pass
+
+    def destroy(self) -> None:
+        self.hide_now()
+        if self._win is not None:
+            try:
+                self._win.destroy()
+            except Exception:
+                pass
+            self._win = None
+
+
 class PresenceController:
     def __init__(self):
         self.cfg = load_config()
@@ -85,6 +196,7 @@ class PresenceController:
         self.screen_off_by_fpm = False
         self.is_dimmed = False
         self.saved_brightness = None
+        self._overlay = _BlackoutOverlay(on_wake=self._wake_from_overlay)
         self._last_checked_mode = None
         self._promo_idle_60hz = False
         self._idle_watch_id = 0
@@ -313,7 +425,14 @@ class PresenceController:
                 time.sleep(delay_sec)
         return True
 
+    def _wake_from_overlay(self) -> None:
+        if self.is_dimmed:
+            self._set_dimming(False)
+            self.is_dimmed = False
+
     def _set_dimming(self, dim: bool) -> None:
+        if not dim:
+            self._overlay.hide_now()
         try:
             res = self.session.call_sync(
                 'org.gnome.SettingsDaemon.Power',
@@ -325,10 +444,12 @@ class PresenceController:
             )
             cur = int(res.unpack()[0])
             if dim:
+                if cur > 0 and self.saved_brightness is None:
+                    self.saved_brightness = cur
+                self._overlay.show_fade()
                 if cur > 0:
-                    if self.saved_brightness is None:
-                        self.saved_brightness = cur
-                    if not self._fade_gsd_brightness(cur, 0, steps=12, delay_sec=0.08, abort_on_activity=True):
+                    if not self._fade_gsd_brightness(cur, 0, steps=10, delay_sec=0.06, abort_on_activity=True):
+                        self._overlay.hide_now()
                         restore = int(self.saved_brightness)
                         self.saved_brightness = None
                         self._set_gsd_brightness(restore)
@@ -338,7 +459,8 @@ class PresenceController:
                 self.saved_brightness = None
                 self._fade_gsd_brightness(cur, restore, steps=5, delay_sec=0.025, abort_on_activity=False)
         except Exception:
-            pass
+            if dim:
+                self._overlay.show_fade()
 
     def _get_display_power_save(self) -> int:
         try:
@@ -915,6 +1037,7 @@ class PresenceController:
         return GLib.SOURCE_REMOVE
 
     def close(self) -> None:
+        self._overlay.destroy()
         self._cancel_timer()
         if getattr(self, '_gesture_timer_id', 0):
             GLib.source_remove(self._gesture_timer_id)
