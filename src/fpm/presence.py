@@ -196,6 +196,7 @@ class PresenceController:
         self.screen_off_by_fpm = False
         self.is_dimmed = False
         self.saved_brightness = None
+        self._dim_baseline_idle_ms = 0
         self._overlay = _BlackoutOverlay(on_wake=self._wake_from_overlay)
         self._last_checked_mode = None
         self._promo_idle_60hz = False
@@ -389,9 +390,12 @@ class PresenceController:
                         self.is_dimmed = False
                 else:
                     idletime_ms = self._get_idletime_ms()
+                    if idletime_ms < self._dim_baseline_idle_ms:
+                        self._dim_baseline_idle_ms = 0
+                    effective_idle_ms = idletime_ms - self._dim_baseline_idle_ms
                     dim_ms = dim_sec * 1000
                     disp_mode = self._get_display_power_save()
-                    if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
+                    if not self.is_dimmed and disp_mode == 0 and effective_idle_ms >= dim_ms:
                         self._set_dimming(True)
                         self.is_dimmed = self.saved_brightness is not None
                     elif self.is_dimmed and idletime_ms < 2500:
@@ -426,6 +430,7 @@ class PresenceController:
         return True
 
     def _wake_from_overlay(self) -> None:
+        self._dim_baseline_idle_ms = self._get_idletime_ms()
         if self.is_dimmed:
             self._set_dimming(False)
             self.is_dimmed = False
@@ -984,6 +989,7 @@ class PresenceController:
 
         if state == 'present':
             self._cancel_timer()
+            self._dim_baseline_idle_ms = self._get_idletime_ms()
             if self.is_dimmed:
                 self._set_dimming(False)
                 self.is_dimmed = False
