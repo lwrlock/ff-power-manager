@@ -281,7 +281,7 @@ class PresenceController:
                     disp_mode = self._get_display_power_save()
                     if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
                         self._set_dimming(True)
-                        self.is_dimmed = True
+                        self.is_dimmed = self.saved_brightness is not None
                     elif self.is_dimmed and idletime_ms < 2500:
                         self._set_dimming(False)
                         self.is_dimmed = False
@@ -301,29 +301,19 @@ class PresenceController:
             None, Gio.DBusCallFlags.NONE, 1000, None,
         )
 
-    def _fade_gsd_brightness(self, start: int, end: int, steps: int = 4) -> None:
+    def _fade_gsd_brightness(self, start: int, end: int, steps: int = 12, delay_sec: float = 0.08, abort_on_activity: bool = False) -> bool:
         if start == end:
-            return
+            return True
         for i in range(1, steps + 1):
+            if abort_on_activity and self._get_idletime_ms() < 1500:
+                return False
             val = round(start + (end - start) * (i / steps))
             self._set_gsd_brightness(val)
             if i < steps:
-                time.sleep(0.035)
+                time.sleep(delay_sec)
+        return True
 
     def _set_dimming(self, dim: bool) -> None:
-        try:
-            self.session.call_sync(
-                'org.gnome.Shell.Brightness',
-                '/org/gnome/Shell/Brightness',
-                'org.gnome.Shell.Brightness',
-                'SetDimming',
-                GLib.Variant('(b)', (dim,)),
-                None, Gio.DBusCallFlags.NONE, 1000, None,
-            )
-            return
-        except Exception:
-            pass
-
         try:
             res = self.session.call_sync(
                 'org.gnome.SettingsDaemon.Power',
@@ -335,15 +325,18 @@ class PresenceController:
             )
             cur = int(res.unpack()[0])
             if dim:
-                if cur > 10:
+                if cur > 0:
                     if self.saved_brightness is None:
                         self.saved_brightness = cur
-                    target = max(8, cur // 2)
-                    self._fade_gsd_brightness(cur, target)
+                    if not self._fade_gsd_brightness(cur, 0, steps=12, delay_sec=0.08, abort_on_activity=True):
+                        restore = int(self.saved_brightness)
+                        self.saved_brightness = None
+                        self._set_gsd_brightness(restore)
+                        self.is_dimmed = False
             elif self.saved_brightness is not None:
                 restore = int(self.saved_brightness)
                 self.saved_brightness = None
-                self._fade_gsd_brightness(cur, restore)
+                self._fade_gsd_brightness(cur, restore, steps=5, delay_sec=0.025, abort_on_activity=False)
         except Exception:
             pass
 
