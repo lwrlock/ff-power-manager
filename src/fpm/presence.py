@@ -271,16 +271,44 @@ class PresenceController:
         else:
             dim_sec = int(self.cfg.get('oled_dim_inactive_sec', 0))
             if dim_sec > 0:
-                idletime_ms = self._get_idletime_ms()
-                dim_ms = dim_sec * 1000
-                disp_mode = self._get_display_power_save()
-                if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
-                    self._set_dimming(True)
-                    self.is_dimmed = True
-                elif self.is_dimmed and idletime_ms < 2500:
-                    self._set_dimming(False)
-                    self.is_dimmed = False
+                if self.cfg.get('inhibit_on_media', True) and self._is_media_active():
+                    if self.is_dimmed:
+                        self._set_dimming(False)
+                        self.is_dimmed = False
+                else:
+                    idletime_ms = self._get_idletime_ms()
+                    dim_ms = dim_sec * 1000
+                    disp_mode = self._get_display_power_save()
+                    if not self.is_dimmed and disp_mode == 0 and idletime_ms >= dim_ms:
+                        self._set_dimming(True)
+                        self.is_dimmed = True
+                    elif self.is_dimmed and idletime_ms < 2500:
+                        self._set_dimming(False)
+                        self.is_dimmed = False
         return GLib.SOURCE_CONTINUE
+
+    def _set_gsd_brightness(self, value: int) -> None:
+        self.session.call_sync(
+            'org.gnome.SettingsDaemon.Power',
+            '/org/gnome/SettingsDaemon/Power',
+            'org.freedesktop.DBus.Properties',
+            'Set',
+            GLib.Variant('(ssv)', (
+                'org.gnome.SettingsDaemon.Power.Screen',
+                'Brightness',
+                GLib.Variant('i', int(value)),
+            )),
+            None, Gio.DBusCallFlags.NONE, 1000, None,
+        )
+
+    def _fade_gsd_brightness(self, start: int, end: int, steps: int = 4) -> None:
+        if start == end:
+            return
+        for i in range(1, steps + 1):
+            val = round(start + (end - start) * (i / steps))
+            self._set_gsd_brightness(val)
+            if i < steps:
+                time.sleep(0.035)
 
     def _set_dimming(self, dim: bool) -> None:
         try:
@@ -297,47 +325,25 @@ class PresenceController:
             pass
 
         try:
+            res = self.session.call_sync(
+                'org.gnome.SettingsDaemon.Power',
+                '/org/gnome/SettingsDaemon/Power',
+                'org.freedesktop.DBus.Properties',
+                'Get',
+                GLib.Variant('(ss)', ('org.gnome.SettingsDaemon.Power.Screen', 'Brightness')),
+                GLib.VariantType('(v)'), Gio.DBusCallFlags.NONE, 1000, None,
+            )
+            cur = int(res.unpack()[0])
             if dim:
-                res = self.session.call_sync(
-                    'org.gnome.SettingsDaemon.Power',
-                    '/org/gnome/SettingsDaemon/Power',
-                    'org.freedesktop.DBus.Properties',
-                    'Get',
-                    GLib.Variant('(ss)', ('org.gnome.SettingsDaemon.Power.Screen', 'Brightness')),
-                    GLib.VariantType('(v)'), Gio.DBusCallFlags.NONE, 1000, None,
-                )
-                cur = int(res.unpack()[0])
-                if cur > 5:
+                if cur > 10:
                     if self.saved_brightness is None:
                         self.saved_brightness = cur
-                    target = max(2, cur // 4)
-                    self.session.call_sync(
-                        'org.gnome.SettingsDaemon.Power',
-                        '/org/gnome/SettingsDaemon/Power',
-                        'org.freedesktop.DBus.Properties',
-                        'Set',
-                        GLib.Variant('(ssv)', (
-                            'org.gnome.SettingsDaemon.Power.Screen',
-                            'Brightness',
-                            GLib.Variant('i', target),
-                        )),
-                        None, Gio.DBusCallFlags.NONE, 1000, None,
-                    )
+                    target = max(8, cur // 2)
+                    self._fade_gsd_brightness(cur, target)
             elif self.saved_brightness is not None:
                 restore = int(self.saved_brightness)
                 self.saved_brightness = None
-                self.session.call_sync(
-                    'org.gnome.SettingsDaemon.Power',
-                    '/org/gnome/SettingsDaemon/Power',
-                    'org.freedesktop.DBus.Properties',
-                    'Set',
-                    GLib.Variant('(ssv)', (
-                        'org.gnome.SettingsDaemon.Power.Screen',
-                        'Brightness',
-                        GLib.Variant('i', restore),
-                    )),
-                    None, Gio.DBusCallFlags.NONE, 1000, None,
-                )
+                self._fade_gsd_brightness(cur, restore)
         except Exception:
             pass
 
